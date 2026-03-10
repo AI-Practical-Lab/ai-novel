@@ -1,0 +1,2 @@
+cn.hb.wk.datasource.config.YudaoDataSourceAutoConfiguration
+cn.hb.wk.mybatis.config.YudaoMybatisAutoConfiguration

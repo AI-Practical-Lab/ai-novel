@@ -231,18 +231,6 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}): Promi
   }
   headers.set('tenant-id', '1');
 
-  // Guard: require positive points for AI endpoints
-  if (url.startsWith('/app-api/api/ai/')) {
-    const point = useUserStore.getState().userInfo?.point ?? 0;
-    if (point <= 0) {
-      toast.warning('积分不足，无法使用 AI 功能');
-      const body = { code: -1, msg: '积分不足，请先充值或签到获取积分' };
-      return new Response(JSON.stringify(body), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-  }
 
   const response = await fetch(url, { ...options, headers });
 

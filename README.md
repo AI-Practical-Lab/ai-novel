@@ -35,6 +35,10 @@
 
 ## 🚀 快速开始
 
+### 在线体验
+
+-  https://xs.aisz.online/
+
 ### 环境要求
 - Node.js 16+
 - npm 或 yarn

@@ -9,6 +9,7 @@ import cn.hb.wk.dal.mysql.project.NovelVolumeMapper;
 import cn.hb.wk.service.project.LoreWriteAdapter;
 import cn.hb.wk.ai.core.model.AiModelFactory;
 import cn.hb.wk.model.AiPlatformEnum;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -32,6 +33,7 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+@Slf4j
 @Service
 @Validated
 public class ImportServiceImpl implements ImportService {
@@ -57,10 +59,32 @@ public class ImportServiceImpl implements ImportService {
     private LoreWriteAdapter loreWriteAdapter;
     @Resource
     private AiModelFactory aiModelFactory;
+    @Value("${spring.ai.dashscope.api-key:}")
+    private String apiKey;
 
     @Value("${novel.ai.platform:TONG_YI}")
     private String aiPlatformProperty;
     private volatile AiPlatformEnum currentPlatform;
+
+    private String uploadToBailian(String content) throws Exception {
+
+        java.io.File tempFile = java.io.File.createTempFile("novel_context_", ".txt");
+        cn.hutool.core.io.FileUtil.writeUtf8String(content, tempFile);
+        try {
+            cn.hutool.http.HttpResponse response = cn.hutool.http.HttpRequest.post("https://dashscope.aliyuncs.com/compatible-mode/v1/files")
+                    .header("Authorization", "Bearer " + apiKey)
+                    .form("purpose", "file-extract")
+                    .form("file", tempFile)
+                    .execute();
+            if (!response.isOk()) {
+                throw new RuntimeException("上传文件到百炼失败: " + response.body());
+            }
+            JsonNode json = new ObjectMapper().readTree(response.body());
+            return json.get("id").asText();
+        } finally {
+            tempFile.delete();
+        }
+    }
 
     @PostConstruct
     private void initAiPlatform() {
@@ -118,7 +142,8 @@ public class ImportServiceImpl implements ImportService {
         tasks.put(id, p);
 
         try {
-            Long projectId = createProjectFromText(type, content, fileName);
+            String fileId = uploadToBailian(content);
+            Long projectId = createProjectFromText(type, content, fileName, fileId);
             p.setProjectId(projectId);
             p.setStep(1);
             p.setCurrentStep(DEFAULT_STEPS.size() > 1 ? DEFAULT_STEPS.get(1) : "complete");
@@ -179,27 +204,33 @@ public class ImportServiceImpl implements ImportService {
                 p.setMessage("忽略错误，继续推进");
             } else if (!alreadyDone && p.getProjectId() != null) {
                 try {
-                    String novelContext = getNovelContext(p.getProjectId(), 30000); // 30k context
+                    NovelProjectDO projectDO = projectMapper.selectById(p.getProjectId());
+                    String fileId = projectDO != null ? projectDO.getFileId() : null;
+                    if (fileId == null) {
+                        String novelContext = getNovelContext(p.getProjectId(), 30000); // 30k context
+                        fileId = uploadToBailian(novelContext);
+                        if (projectDO != null) {
+                            projectDO.setFileId(fileId);
+                            projectMapper.updateById(projectDO);
+                        }
+                    }
+
+                    com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions options = com.alibaba.cloud.ai.dashscope.chat.DashScopeChatOptions.builder()
+                            .withModel("qwen-long")
+                            .build();
 
                     if ("generate_outline".equals(finished)) {
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
-                        String system = "你是资深主编。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。JSON 格式：{\"summary\":\"全书总纲\",\"conflict\":\"主线冲突\",\"hooks\":[\"钩子1\",\"钩子2\"],\"twists\":[\"转折1\",\"转折2\"]}";
-                        String user = "书名：" + (title != null ? title : "") + "\n\n正文试读：\n" + novelContext + "\n\n请根据正文生成：1)全书总纲 2)主线冲突 3)情节钩子(列表) 4)剧情转折(列表)。全部输出到一个JSON中。";
-                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                        String system = "你是资深主编。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。JSON 格式：{\"summary\":\"全书总纲\",\"mainConflict\":\"主线冲突\",\"hooks\":[\"钩子1\",\"钩子2\"],\"twists\":[\"转折1\",\"转折2\"]}";
+                        String user = "书名：" + (title != null ? title : "") + "\n\n请根据上传的文档内容生成：1)全书总纲 2)主线冲突 3)情节钩子(列表) 4)剧情转折(列表)。全部输出到一个JSON中。";
+                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                         String content = AiUtils.getChatResponseContent(response);
                         JsonNode node = toJson(content);
 
                         // 1. 保存剧情大纲
                         String summary = node != null && node.has("summary") ? String.valueOf(node.get("summary").asText()) : "总纲";
-                        loreWriteAdapter.writeLore(p.getProjectId(), "outline", "剧情大纲", summary, content);
-
-                        // 2. 主线冲突 - 存到 world 类型（作为世界与规则的子集）
-                        if (node != null && node.has("conflict")) {
-                            String conflict = node.get("conflict").asText();
-                            String conflictJson = "{\"mainConflict\":\"" + conflict.replace("\"", "\\\"") + "\"}";
-                            loreWriteAdapter.writeLore(p.getProjectId(), "world", "主线冲突", conflict, conflictJson);
-                        }
+                        loreWriteAdapter.writeLore(p.getProjectId(), "outline", "主大纲", summary, content);
 
                         // 3. 钩子 - 存到 plot 类型
                         if (node != null && node.has("hooks") && node.get("hooks").isArray()) {
@@ -216,7 +247,7 @@ public class ImportServiceImpl implements ImportService {
                         p.setGeneratedCount(1);
                         p.setGeneratedType("outline");
                     } else if ("generate_volume_summary".equals(finished)) {
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         List<NovelVolumeDO> vols = volumeMapper.selectList("project_id", p.getProjectId());
                         int count = 0;
                         if (vols != null && !vols.isEmpty()) {
@@ -224,8 +255,8 @@ public class ImportServiceImpl implements ImportService {
                             for (NovelVolumeDO vol : vols) {
                                 try {
                                     String system = "你是网文编辑。请根据正文片段为当前分卷撰写简短摘要（200字以内）。直接输出摘要内容，不要其他说明。";
-                                    String user = "分卷名：" + vol.getTitle() + "\n\n正文片段：\n" + novelContext;
-                                    ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                                    String user = "分卷名：" + vol.getTitle() + "\n\n请根据上传的文档为当前分卷撰写简短摘要。";
+                                    ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                                     String summary = AiUtils.getChatResponseContent(response);
                                     if (summary != null && !summary.isEmpty()) {
                                         vol.setSummary(summary.trim());
@@ -233,7 +264,7 @@ public class ImportServiceImpl implements ImportService {
                                         count++;
                                     }
                                 } catch (Exception e) {
-                                    System.err.println("Volume summary generation failed for " + vol.getTitle() + ": " + e.getMessage());
+                                    log.error("Volume summary generation failed for " + vol.getTitle() + ": " + e.getMessage());
                                 }
                             }
                         }
@@ -248,17 +279,16 @@ public class ImportServiceImpl implements ImportService {
                         p.setGeneratedCount(count);
                         p.setGeneratedType("volume_summary");
                     } else if ("generate_core".equals(finished)) {
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
                         String system = "你是资深设定师。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。\n"
                                 + "JSON 格式：\n"
                                 + "{\n"
-                                + "  \"protagonist\": { \"name\": \"...\", \"role\": \"...\", \"personality\": \"...\", \"description\": \"...\", \"age\": \"...\", \"gender\": \"...\", \"cheat\": \"...\" },\n"
-                                + "  \"antagonist\": { \"name\": \"...\", \"role\": \"...\", \"description\": \"...\", \"personality\": \"...\" },\n"
-                                + "  \"world\": { \"name\": \"...\", \"description\": \"...\", \"background\": \"...\" }\n"
+                                + "  \"protagonist\": { \"name\": \"姓名\", \"gender\": \"性别\", \"age\": \"年龄\",  \"personality\": \"核心性格\", \"cheat\": \"金手指/核心能力\" },\n"
+                                + "  \"antagonist\": { \"name\": \"姓名/代号\", \"role\": \"身份/定位\", \"personality\": \"性格与动机\" }\n"
                                 + "}";
-                        String user = "书名：" + (title != null ? title : "") + "\n\n正文片段：\n" + novelContext + "\n\n请提取核心设定（主角、反派、世界观）并输出 JSON。其中主角必须包含金手指（cheat）设定。";
-                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                        String user = "书名：" + (title != null ? title : "") + "\n\n请根据上传的文档提取核心设定（主角、反派）并输出 JSON。其中主角必须包含金手指（cheat）设定。";
+                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                         String content = AiUtils.getChatResponseContent(response);
                         JsonNode node = toJson(content);
                         int count = 0;
@@ -266,49 +296,49 @@ public class ImportServiceImpl implements ImportService {
                             if (node.has("protagonist")) {
                                 JsonNode pNode = node.get("protagonist");
                                 String pName = pNode.has("name") ? pNode.get("name").asText() : "主角";
-                                loreWriteAdapter.writeLore(p.getProjectId(), "protagonist", "主角：" + pName, toJsonString(pNode), toJsonString(pNode));
+                                StringBuilder pContent = new StringBuilder();
+                                if (pNode.has("name")) pContent.append("姓名：").append(pNode.get("name").asText()).append("\n");
+                                if (pNode.has("gender")) pContent.append("性别：").append(pNode.get("gender").asText()).append("\n");
+                                if (pNode.has("age")) pContent.append("年龄：").append(pNode.get("age").asText()).append("\n");
+                                if (pNode.has("personality")) pContent.append("性格：").append(pNode.get("personality").asText()).append("\n");
+                                if (pNode.has("cheat")) pContent.append("外挂：").append(pNode.get("cheat").asText());
+                                loreWriteAdapter.writeLore(p.getProjectId(), "protagonist", "主角：" + pName, pContent.toString().trim(), toJsonString(pNode));
                                 count++;
                             }
                             if (node.has("antagonist")) {
                                 JsonNode aNode = node.get("antagonist");
                                 String aName = aNode.has("name") ? aNode.get("name").asText() : "反派";
-                                loreWriteAdapter.writeLore(p.getProjectId(), "antagonist", "反派：" + aName, toJsonString(aNode), toJsonString(aNode));
-                                count++;
-                            }
-                            if (node.has("world")) {
-                                JsonNode wNode = node.get("world");
-                                // 强制使用统一标题"世界观设定"，确保后续步骤能合并到同一条记录
-                                loreWriteAdapter.writeLore(p.getProjectId(), "world", "世界观设定", toJsonString(wNode), toJsonString(wNode));
+                                StringBuilder aContent = new StringBuilder();
+                                if (aNode.has("name")) aContent.append("名称：").append(aNode.get("name").asText()).append("\n");
+                                if (aNode.has("role")) aContent.append("角色：").append(aNode.get("role").asText()).append("\n");
+                                if (aNode.has("personality")) aContent.append("性格/动机：").append(aNode.get("personality").asText());
+                                loreWriteAdapter.writeLore(p.getProjectId(), "antagonist", "反派：" + aName, aContent.toString().trim(), toJsonString(aNode));
                                 count++;
                             }
                         }
                         // 如果 AI 没有成功生成核心设定，创建空的默认记录，确保前端能显示
                         if (count == 0) {
                             // 创建空的 protagonist
-                            String emptyProtagonist = "{\"name\":\"\",\"role\":\"\",\"personality\":\"\",\"description\":\"\",\"age\":\"\",\"gender\":\"\",\"cheat\":\"\"}";
+                            String emptyProtagonist = "{\"name\":\"\",\"gender\":\"\",\"age\":\"\",\"personality\":\"\",\"cheat\":\"\"}";
                             loreWriteAdapter.writeLore(p.getProjectId(), "protagonist", "主角", "主角设定（待完善）", emptyProtagonist);
                             count++;
                             // 创建空的 antagonist
-                            String emptyAntagonist = "{\"name\":\"\",\"role\":\"\",\"description\":\"\",\"personality\":\"\"}";
+                            String emptyAntagonist = "{\"name\":\"\",\"role\":\"\",\"personality\":\"\"}";
                             loreWriteAdapter.writeLore(p.getProjectId(), "antagonist", "反派", "反派设定（待完善）", emptyAntagonist);
-                            count++;
-                            // 创建空的 world
-                            String emptyWorld = "{\"name\":\"\",\"description\":\"\",\"background\":\"\",\"powerSystem\":\"\",\"forces\":\"\"}";
-                            loreWriteAdapter.writeLore(p.getProjectId(), "world", "世界观设定", "世界观设定（待完善）", emptyWorld);
                             count++;
                         }
                         p.setGeneratedCount(count);
                         p.setGeneratedType("core");
                     } else if ("generate_world_basics".equals(finished)) {
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
                         String system = "你是资深网文策划。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。\n"
                                 + "JSON 格式：\n"
                                 + "{\n"
-                                + "  \"world\": { \"background\": \"世界背景描述\", \"power_system\": \"力量体系描述\", \"forces\": \"势力分布描述\", \"current_time\": \"当前时空背景\" }\n"
+                                + "  \"world\": { \"background\": \"世界背景描述\", \"power_system\": \"力量体系描述\", \"forces\": \"势力分布描述\" }\n"
                                 + "}";
-                        String user = "书名：" + (title != null ? title : "") + "\n\n正文片段：\n" + novelContext + "\n\n请生成完整的世界观设定：1)世界背景 2)力量体系 3)势力分布 4)当前时空背景。全部输出到一个JSON的world对象中。";
-                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                        String user = "书名：" + (title != null ? title : "") + "\n\n请根据上传的文档生成完整的世界观设定：1)世界背景 2)力量体系 3)势力分布 4)当前时空背景。全部输出到一个JSON的world对象中。";
+                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                         String content = AiUtils.getChatResponseContent(response);
                         JsonNode node = toJson(content);
                         int count = 0;
@@ -326,9 +356,6 @@ public class ImportServiceImpl implements ImportService {
                             if (wNode.has("forces")) {
                                 worldMap.put("forces", wNode.get("forces").asText());
                             }
-                            if (wNode.has("current_time")) {
-                                worldMap.put("currentTime", wNode.get("current_time").asText());
-                            }
 
                             // 创建一个综合的世界观设定
                             String worldContent = worldMap.containsKey("background") ? worldMap.get("background") : "世界观设定";
@@ -338,9 +365,6 @@ public class ImportServiceImpl implements ImportService {
                             if (worldMap.containsKey("forces") && !worldMap.get("forces").isEmpty()) {
                                 worldContent += "\n\n【势力分布】" + worldMap.get("forces");
                             }
-                            if (worldMap.containsKey("currentTime") && !worldMap.get("currentTime").isEmpty()) {
-                                worldContent += "\n\n【当前时空】" + worldMap.get("currentTime");
-                            }
 
                             // 写入单一的world lore，包含所有字段
                             loreWriteAdapter.writeLore(p.getProjectId(), "world", "世界观设定", worldContent, toJsonStr(worldMap));
@@ -349,7 +373,7 @@ public class ImportServiceImpl implements ImportService {
 
                         // 如果没有生成，创建空的
                         if (count == 0) {
-                            String emptyWorld = "{\"background\":\"\",\"powerSystem\":\"\",\"forces\":\"\",\"currentTime\":\"\"}";
+                            String emptyWorld = "{\"background\":\"\",\"powerSystem\":\"\",\"forces\":\"\"}";
                             loreWriteAdapter.writeLore(p.getProjectId(), "world", "世界观设定", "世界观设定（待完善）", emptyWorld);
                             count = 1;
                         }
@@ -357,7 +381,7 @@ public class ImportServiceImpl implements ImportService {
                         p.setGeneratedType("world_basics");
                     } else if ("generate_plot_structure".equals(finished)) {
                         // 剧情架构 - 钩子、转折等
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
                         String system = "你是资深网文策划。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。\n"
                                 + "JSON 格式：\n"
@@ -366,8 +390,8 @@ public class ImportServiceImpl implements ImportService {
                                 + "  \"twists\": [\"转折1描述\", \"转折2描述\"],\n"
                                 + "  \"foreshadowing\": [\"伏笔1\", \"伏笔2\"]\n"
                                 + "}";
-                        String user = "书名：" + (title != null ? title : "") + "\n\n正文片段：\n" + novelContext + "\n\n请分析并生成：1)情节钩子 2)剧情转折 3)伏笔埋设。全部输出到一个JSON中。";
-                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                        String user = "书名：" + (title != null ? title : "") + "\n\n请根据上传的文档分析并生成：1)情节钩子 2)剧情转折 3)伏笔埋设。全部输出到一个JSON中。";
+                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                         String content = AiUtils.getChatResponseContent(response);
                         JsonNode node = toJson(content);
                         int count = 0;
@@ -376,19 +400,19 @@ public class ImportServiceImpl implements ImportService {
                             // 钩子
                             if (node.has("hooks") && node.get("hooks").isArray()) {
                                 String hooksJson = node.get("hooks").toString();
-                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "钩子", "情节钩子列表", "{\"hooks\":" + hooksJson + "}");
+                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "钩子", hooksJson, "{\"hooks\":" + hooksJson + "}");
                                 count++;
                             }
                             // 转折
                             if (node.has("twists") && node.get("twists").isArray()) {
                                 String twistsJson = node.get("twists").toString();
-                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "转折", "剧情转折列表", "{\"twists\":" + twistsJson + "}");
+                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "转折", twistsJson, "{\"twists\":" + twistsJson + "}");
                                 count++;
                             }
                             // 伏笔
                             if (node.has("foreshadowing") && node.get("foreshadowing").isArray()) {
                                 String foreshadowingJson = node.get("foreshadowing").toString();
-                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "伏笔", "伏笔列表", "{\"foreshadowing\":" + foreshadowingJson + "}");
+                                loreWriteAdapter.writeLore(p.getProjectId(), "plot", "伏笔", foreshadowingJson, "{\"foreshadowing\":" + foreshadowingJson + "}");
                                 count++;
                             }
                         }
@@ -403,90 +427,96 @@ public class ImportServiceImpl implements ImportService {
                         p.setGeneratedType("plot_structure");
                     } else if ("generate_narrative".equals(finished)) {
                         // 叙事策略 - 文风基调
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
                         String system = "你是资深网文策划。必须严格使用简体中文，严格按 JSON 输出，禁止 Markdown 代码块。\n"
                                 + "JSON 格式：\n"
                                 + "{\n"
-                                + "  \"tone\": \"文风基调描述\",\n"
-                                + "  \"pacing\": \"节奏特点\",\n"
-                                + "  \"themes\": [\"核心元素1\", \"核心元素2\"],\n"
-                                + "  \"targetAudience\": \"目标读者\"\n"
+                                + "  \"style\": \"文风基调，示例：严肃、幽默、暗黑、热血、轻松、悲剧...\",\n"
+                                + "  \"tags\": [\"核心元素/标签，示例：职场、社会、奋斗、克苏鲁...\"],\n"
+                                + "  \"genre\": \"主要题材，示例：玄幻、科幻、都市、悬疑、历史、游戏、仙侠...\""
                                 + "}";
-                        String user = "书名：" + (title != null ? title : "") + "\n\n正文片段：\n" + novelContext + "\n\n请分析并生成：1)文风基调 2)叙事节奏 3)核心主题元素 4)目标读者群体。全部输出到一个JSON中。";
-                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new UserMessage(user))));
+                        String user = "书名：" + (title != null ? title : "") + "\n\n请根据上传的文档分析并生成：1)文风基调 2)核心元素/标签 3)主要题材。全部输出到一个JSON中。";
+                        ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
                         String content = AiUtils.getChatResponseContent(response);
                         JsonNode node = toJson(content);
-                        int count = 0;
 
                         if (node != null) {
-                            // 文风基调 - 存到 narrative 类型
-                            if (node.has("tone")) {
-                                String tone = node.get("tone").asText();
-                                String narrativeJson = toJsonString(node);
-                                loreWriteAdapter.writeLore(p.getProjectId(), "narrative", "文风基调", tone, narrativeJson);
-                                count++;
-                            }
-                            // 节奏特点
-                            if (node.has("pacing")) {
-                                String pacing = node.get("pacing").asText();
-                                loreWriteAdapter.writeLore(p.getProjectId(), "narrative", "叙事节奏", pacing, "{\"pacing\":\"" + pacing.replace("\"", "\\\"") + "\"}");
-                                count++;
-                            }
-                            // 核心元素
-                            if (node.has("themes") && node.get("themes").isArray()) {
-                                String themesJson = node.get("themes").toString();
-                                loreWriteAdapter.writeLore(p.getProjectId(), "narrative", "核心元素", "主题元素列表", "{\"themes\":" + themesJson + "}");
-                                count++;
-                            }
-                        }
-
-                        // 更新项目的文风字段
-                        if (node != null && node.has("tone")) {
                             NovelProjectDO projectUpdate = new NovelProjectDO();
                             projectUpdate.setId(p.getProjectId());
-                            projectUpdate.setStyle(node.get("tone").asText());
+                            // 文风基调 - 存到 narrative 类型
+                            if (node.has("style")) {
+                                String style = node.get("style").asText();
+                                projectUpdate.setStyle(style);
+                            }
+                            // 节奏特点
+                            if (node.has("tags")) {
+                                String tags = node.get("tags").toString().replace("[","").replace("]","");
+                                projectUpdate.setTags(tags);
+                            }
+                            // 核心元素
+                            if (node.has("genre")) {
+                                String genre = node.get("genre").asText();
+                                projectUpdate.setGenre(genre);
+                            }
                             projectMapper.updateById(projectUpdate);
+
                         }
 
-                        // 如果没有生成，创建空的
-                        if (count == 0) {
-                            loreWriteAdapter.writeLore(p.getProjectId(), "narrative", "文风基调", "文风基调（待完善）", "{\"tone\":\"\"}");
-                            count = 1;
-                        }
-                        p.setGeneratedCount(count);
-                        p.setGeneratedType("narrative");
                     } else if ("generate_characters".equals(finished)) {
-                        // 两阶段提取：先名后详
-                        ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
+                        // 一次性提取所有重要角色详情
+                        ChatModel chat = aiModelFactory.getDefaultChatModel(AiPlatformEnum.TONG_YI);
                         String title = getProjectTitle(p.getProjectId());
 
-                        // 1. 提取名单
-                        String listSystem = "你是资深小说编辑。请从小说正文中提取所有重要角色的姓名列表（最多8个）。必须严格使用简体中文，按 JSON 数组输出字符串：[\"姓名1\", \"姓名2\"]。不要包含任何对象结构。";
-                        String listUser = "作品：" + (title != null ? title : "") + "\n\n正文片段：\n" + novelContext;
-                        ChatResponse listResp = chat.call(new Prompt(java.util.List.of(new SystemMessage(listSystem), new UserMessage(listUser))));
-                        JsonNode listNode = toJson(AiUtils.getChatResponseContent(listResp));
+                        String system = "你是角色分析专家。请从小说正文中提取所有重要角色（最多20个，优先出场与剧情占比大的角色）的详细档案，不要包含作品的主角和主要反派，因为他们已经被单独记录了。\n"
+                                + "必须严格使用简体中文，直接输出 JSON 数组，禁止包裹在对象中。\n"
+                                + "JSON 格式示例：\n"
+                                + "[\n"
+                                + "  {\"name\":\"角色姓名\", \"role\":\"身份\", \"gender\":\"性别\", \"age\":\"年龄\", \"personality\":\"性格\", \"appearance\":\"外貌\", \"background\":\"背景\", \"ability\":\"能力\", \"goal\":\"目标\", \"conflict\":\"冲突\", \"relationships\":\"人际关系\", \"description\":\"综合描述\"}\n"
+                                + "]";
+                        String user = "作品：" + (title != null ? title : "") + "\n\n请根据上传的文档提取并分析重要角色，输出角色详情数组。";
 
                         int count = 0;
-                        if (listNode != null && listNode.isArray()) {
-                            for (JsonNode nameNode : listNode) {
-                                String name = nameNode.asText();
-                                if (name == null || name.length() < 2) continue;
+                        try {
+                            ChatResponse response = chat.call(new Prompt(java.util.List.of(new SystemMessage(system), new SystemMessage("fileid://" + fileId), new UserMessage(user)), options));
+                            JsonNode node = toJson(AiUtils.getChatResponseContent(response));
 
-                                // 2. 生成详情
-                                String detailSystem = "你是角色分析专家。请根据小说正文，生成角色【" + name + "】的详细档案。\n"
-                                        + "JSON 格式：{\"name\":\"" + name + "\", \"role\":\"身份\", \"gender\":\"性别\", \"age\":\"年龄\", \"personality\":\"性格\", \"appearance\":\"外貌\", \"background\":\"背景\", \"ability\":\"能力\", \"goal\":\"目标\", \"conflict\":\"冲突\", \"relationships\":\"人际关系\", \"description\":\"综合描述\"}";
-                                String detailUser = "正文片段：\n" + novelContext + "\n\n请分析角色：" + name;
-                                try {
-                                    ChatResponse detailResp = chat.call(new Prompt(java.util.List.of(new SystemMessage(detailSystem), new UserMessage(detailUser))));
-                                    String detailContent = AiUtils.getChatResponseContent(detailResp);
-                                    loreWriteAdapter.writeLore(p.getProjectId(), "character", name, detailContent, detailContent);
-                                    count++;
-                                } catch (Exception e) {
-                                    // 忽略单个失败
-                                    System.err.println("Character generation failed for " + name + ": " + e.getMessage());
+                            JsonNode arrayNode = null;
+                            if (node != null) {
+                                if (node.isArray()) {
+                                    arrayNode = node;
+                                } else if (node.has("characters") && node.get("characters").isArray()) {
+                                    arrayNode = node.get("characters");
                                 }
                             }
+
+                            if (arrayNode != null && arrayNode.isArray()) {
+                                for (JsonNode charNode : arrayNode) {
+                                    String name = charNode.has("name") ? charNode.get("name").asText() : null;
+                                    if (name == null || name.length() < 2) continue;
+
+                                    StringBuilder charContent = new StringBuilder();
+                                    if (charNode.has("name")) charContent.append("姓名：").append(charNode.get("name").asText()).append("\n");
+                                    if (charNode.has("role")) charContent.append("身份：").append(charNode.get("role").asText()).append("\n");
+                                    if (charNode.has("gender")) charContent.append("性别：").append(charNode.get("gender").asText()).append("\n");
+                                    if (charNode.has("age")) charContent.append("年龄：").append(charNode.get("age").asText()).append("\n");
+                                    if (charNode.has("personality")) charContent.append("性格：").append(charNode.get("personality").asText()).append("\n");
+                                    if (charNode.has("appearance")) charContent.append("外貌：").append(charNode.get("appearance").asText()).append("\n");
+                                    if (charNode.has("background")) charContent.append("背景：").append(charNode.get("background").asText()).append("\n");
+                                    if (charNode.has("ability")) charContent.append("能力：").append(charNode.get("ability").asText()).append("\n");
+                                    if (charNode.has("goal")) charContent.append("目标：").append(charNode.get("goal").asText()).append("\n");
+                                    if (charNode.has("conflict")) charContent.append("冲突：").append(charNode.get("conflict").asText()).append("\n");
+                                    if (charNode.has("relationships")) charContent.append("人际关系：").append(charNode.get("relationships").asText()).append("\n");
+                                    if (charNode.has("description")) charContent.append("综合描述：").append(charNode.get("description").asText());
+
+                                    String detailContent = charContent.toString().trim();
+                                    String jsonContent = toJsonString(charNode);
+                                    loreWriteAdapter.writeLore(p.getProjectId(), "character", name, detailContent, jsonContent);
+                                    count++;
+                                }
+                            }
+                        } catch (Exception e) {
+                            log.error("Character generation failed: " + e.getMessage());
                         }
 
                         if (count == 0) {
@@ -546,7 +576,7 @@ public class ImportServiceImpl implements ImportService {
     }
 
     @Transactional(rollbackFor = Exception.class)
-    protected Long createProjectFromText(String type, String content, String fileName) {
+    protected Long createProjectFromText(String type, String content, String fileName, String fileId) {
         String normalized = content != null ? content.replace("\r\n", "\n") : "";
         if (normalized.isEmpty()) {
             throw new IllegalArgumentException("导入内容为空");
@@ -556,6 +586,7 @@ public class ImportServiceImpl implements ImportService {
 
         NovelProjectDO project = new NovelProjectDO();
         project.setTitle(baseTitle);
+        project.setFileId(fileId);
         project.setCreateTime(now);
         project.setUpdateTime(now);
         projectMapper.insert(project);
@@ -631,7 +662,7 @@ public class ImportServiceImpl implements ImportService {
         StringBuilder current = new StringBuilder();
         String currentTitle = null;
         // 匹配：第X卷、卷X、# 卷名、Volume X
-        String regex = "^\\s*(第[一二三四五六七八九十百千万亿0-9]+[卷部篇]|卷\\s*\\d+|#\\s*.*|Volume\\s*\\d+).*$";
+        String regex = "^\\s*(第[一二三四五六七八九十百千万亿0-9]+[卷部篇幕]|卷\\s*\\d+|#\\s*.*|Volume\\s*\\d+).*$";
         for (String line : lines) {
             String trimmed = line != null ? line.trim() : "";
             if (trimmed.matches(regex)) {
@@ -659,13 +690,13 @@ public class ImportServiceImpl implements ImportService {
         // 1. 第X章/回/节 + 可选标题（如：第五百九十九章 收网）
         // 2. Chapter X / Chapter 第X章
         // 3. ## 章节名
-        // 4. 数字+. 或 数字、 开头（如：1. 第一章，500、章节名）
+        // 4. 数字+. 或 数字、 开头（如：1. 第一章，500、章节名，1.章节名）
         // 5. 卷X Volume X
         String chapterRegex = "^\\s*(" +
                 "第[一二三四五六七八九十百千万亿零0-9]+[章回节]"  // 第X章/回/节（如：第五百九十九章 收网）
                 + "|Chapter\\s*\\d+"  // Chapter 1
                 + "|##\\s+.+"  // ## 章节名
-                + "|\\d+[、.]\\s+.+"  // 1. 第一章 或 1、章节名
+                + "|\\d+[、.]\\s*.+"  // 1. 第一章 或 1、章节名 或 1.章节名
                 + ").*$";
 
         for (String line : lines) {

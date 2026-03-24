@@ -19,4 +19,5 @@ public class NovelProjectDO extends BaseDO {
     private String genre;
     private String style;
     private String tags;
+    private String fileId;
 }

@@ -1,59 +1,54 @@
 server:
   port: 48080
 
---- #################### 数据库相关配置 ####################
+--- #################### Database Related Configuration ####################
 spring:
-  # 数据源配置项
+  # Data source configuration
   datasource:
-    druid: # Druid 【监控】相关的全局配置
+    druid: # Druid [Monitoring] related global configuration
       web-stat-filter:
         enabled: true
       stat-view-servlet:
         enabled: true
-        allow: # 设置白名单，不填则允许所有访问
+        allow: # Set whitelist, allow all access if empty
         url-pattern: /druid/*
-        login-username: # 控制台管理用户名和密码
+        login-username: # Console management username and password
         login-password:
       filter:
         stat:
           enabled: true
-          log-slow-sql: true # 慢 SQL 记录
+          log-slow-sql: true # Slow SQL logging
           slow-sql-millis: 100
           merge-sql: true
         wall:
           config:
             multi-statement-allow: true
-    dynamic: # 多数据源配置
-      druid: # Druid 【连接池】相关的全局配置
-        initial-size: 1 # 初始连接数
-        min-idle: 1 # 最小连接池数量
-        max-active: 20 # 最大连接池数量
-        max-wait: 60000 # 配置获取连接等待超时的时间，单位：毫秒（1 分钟）
-        time-between-eviction-runs-millis: 60000 # 配置间隔多久才进行一次检测，检测需要关闭的空闲连接，单位：毫秒（1 分钟）
-        min-evictable-idle-time-millis: 600000 # 配置一个连接在池中最小生存的时间，单位：毫秒（10 分钟）
-        max-evictable-idle-time-millis: 1800000 # 配置一个连接在池中最大生存的时间，单位：毫秒（30 分钟）
-        validation-query: SELECT 1 FROM DUAL # 配置检测连接是否有效
+    dynamic: # Multi-data source configuration
+      druid: # Druid [Connection Pool] related global configuration
+        initial-size: 1 # Initial connection count
+        min-idle: 1 # Minimum connection pool size
+        max-active: 20 # Maximum connection pool size
+        max-wait: 60000 # Connection acquisition timeout in milliseconds (1 minute)
+        time-between-eviction-runs-millis: 60000 # Time between idle connection eviction checks in milliseconds (1 minute)
+        min-evictable-idle-time-millis: 600000 # Minimum connection idle time in milliseconds (10 minutes)
+        max-evictable-idle-time-millis: 1800000 # Maximum connection idle time in milliseconds (30 minutes)
+        validation-query: SELECT 1 FROM DUAL # Query to validate connection validity
         test-while-idle: true
         test-on-borrow: false
         test-on-return: false
-        pool-prepared-statements: true # 是否开启 PreparedStatement 缓存
-        max-pool-prepared-statement-per-connection-size: 20 # 每个连接缓存的 PreparedStatement 数量
+        pool-prepared-statements: true # Whether to enable PreparedStatement caching
+        max-pool-prepared-statement-per-connection-size: 20 # Number of PreparedStatements cached per connection
       primary: master
       datasource:
         master:
-          url: jdbc:mysql://127.0.0.1:3306/ai-novel?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true # MySQL Connector/J 8.X 连接的示例
+          url: jdbc:mysql://localhost:13307/ai-novel?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&nullCatalogMeansCurrent=true&rewriteBatchedStatements=true # Example MySQL Connector/J 8.X connection
           username: root
-          password: 123456
-        slave: # 模拟从库，可根据自己需要修改
-          lazy: true # 开启懒加载，保证启动速度
-          url: jdbc:mysql://127.0.0.1:3306/ai-novel?useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&rewriteBatchedStatements=true&nullCatalogMeansCurrent=true
-          username: root
-          password: 123456
+          password: 123456!@
 
-# 日志文件配置
+# Log file configuration
 logging:
   file:
-    name: ${user.home}/logs/${spring.application.name}.log # 日志文件名，全路径
+    name: ${user.home}/logs/${spring.application.name}.log # Log file name with full path
   level:
-    # 配置自己写的 MyBatis Mapper 打印日志
+    # Configure logging for custom MyBatis Mappers
     org.springframework.context.support.PostProcessorRegistrationDelegate: ERROR

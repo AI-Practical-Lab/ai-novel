@@ -106,4 +106,5 @@ AINovel/
 
 遇到问题就加入我们！
 
-![群二维码](frontend/public/QrCode.jpg)
+AI实战研究院
+https://aisz.online/

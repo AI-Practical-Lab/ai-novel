@@ -40,18 +40,25 @@ interface Props {
   milestoneContext?: any;
 }
 
-export default function BeatSheetEditor({ chapter, onSave, isSaving, previousContext, previousChapterContent, previousChapterId, previousChapterTitle, volumeSummary, characters, coreSettings, milestoneContext }: Props) {
+export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSaving, previousContext, previousChapterContent, previousChapterId, previousChapterTitle, volumeSummary, characters, coreSettings, milestoneContext }: Props) {
   const [beatSheet, setBeatSheet] = useState<RichBeatSheet>({
     beats: [],
     goal: '',
     conflict: '',
     hook: ''
   });
-  
+
+  const [summary, setSummary] = useState(chapter.summary || '');
+  const [isSavingSummary, setIsSavingSummary] = useState(false);
+
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAddingBeat, setIsAddingBeat] = useState(false);
   const [newBeatInstruction, setNewBeatInstruction] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSummary(chapter.summary || '');
+  }, [chapter.id, chapter.summary]);
 
   useEffect(() => {
     if (chapter.beatSheet) {
@@ -163,15 +170,15 @@ export default function BeatSheetEditor({ chapter, onSave, isSaving, previousCon
         milestoneContext
       };
       const res = await generateBeatSheet(payload);
-      
+
       if (res.success && res.data) {
         const raw = res.data as any;
         const scenes: SceneInfo[] | undefined = Array.isArray(raw.scenes) ? raw.scenes : undefined;
         const beats: string[] = Array.isArray(raw.beats)
-          ? raw.beats
-          : Array.isArray(scenes)
-            ? scenes.map((s, idx) => s.summary || `场景 ${idx + 1}`)
-            : [];
+            ? raw.beats
+            : Array.isArray(scenes)
+                ? scenes.map((s, idx) => s.summary || `场景 ${idx + 1}`)
+                : [];
         const nextBeatSheet: RichBeatSheet = {
           beats,
           goal: raw.goal || '',
@@ -261,228 +268,271 @@ export default function BeatSheetEditor({ chapter, onSave, isSaving, previousCon
     setBeatSheet(prev => ({ ...prev, beats: newBeats }));
   };
 
-  const handleSaveManual = () => {
-    onSave(beatSheet);
+  const handleSaveManual = async () => {
+    try {
+      await onSave(beatSheet);
+      toast.success('章纲编排保存成功');
+    } catch (error) {
+      toast.error('章纲编排保存失败');
+    }
+  };
+
+  const handleSaveSummary = async () => {
+    if (onSaveSummary) {
+      setIsSavingSummary(true);
+      try {
+        await onSaveSummary(summary);
+        toast.success('本章章纲保存成功');
+      } catch (error) {
+        toast.error('本章章纲保存失败');
+      } finally {
+        setIsSavingSummary(false);
+      }
+    }
   };
 
   return (
-    <div className="h-full flex flex-col bg-zinc-50 dark:bg-zinc-900/30 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
-      {/* Header */}
-      <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-white dark:bg-zinc-800/50">
-        <div>
-          <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">章纲编排</h3>
-          <p className="text-sm text-zinc-500">规划本章的详细剧情点</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={handleGenerate}
-            disabled={isGenerating}
-            className="px-3 py-1.5 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-          >
-            {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
-            <span>AI 生成章纲</span>
-          </button>
-          <button
-            onClick={handleSaveManual}
-            disabled={isSaving}
-            className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-          >
-            {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-            <span>保存</span>
-          </button>
-        </div>
-      </div>
-
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
-        {errorMessage && (
-          <div className="px-3 py-2 rounded-md bg-red-50 text-red-600 text-xs border border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 flex items-center justify-between">
-            <span>{errorMessage}</span>
+      <div className="h-full flex flex-col bg-zinc-50 dark:bg-zinc-900/30 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
+        {/* Chapter Summary Section */}
+        <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 flex flex-col gap-3 bg-white dark:bg-zinc-800/50">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">本章章纲</h3>
+              <p className="text-sm text-zinc-500">本章的故事摘要与核心事件</p>
+            </div>
             <button
-              onClick={() => setErrorMessage(null)}
-              className="ml-3 text-red-400 hover:text-red-600 text-xs"
+                onClick={handleSaveSummary}
+                disabled={isSavingSummary}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
             >
-              关闭
+              {isSavingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              <span>保存章纲</span>
             </button>
           </div>
-        )}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">本章目标 (Goal)</label>
-            <textarea
-              value={beatSheet.goal}
-              onChange={e => setBeatSheet(prev => ({ ...prev, goal: e.target.value }))}
-              className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="主角想要达成什么？"
-            />
+          <textarea
+              value={summary}
+              onChange={e => setSummary(e.target.value)}
+              className="w-full h-32 p-3 bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="请输入本章的章纲摘要..."
+          />
+        </div>
+
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between bg-white dark:bg-zinc-800/50">
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">章纲编排</h3>
+            <p className="text-sm text-zinc-500">规划本章的详细剧情点</p>
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">核心冲突 (Conflict)</label>
-            <textarea
-              value={beatSheet.conflict}
-              onChange={e => setBeatSheet(prev => ({ ...prev, conflict: e.target.value }))}
-              className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="遇到什么阻碍？"
-            />
+          <div className="flex gap-2">
+            <button
+                onClick={handleGenerate}
+                disabled={isGenerating}
+                className="px-3 py-1.5 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+            >
+              {isGenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+              <span>AI 生成章纲</span>
+            </button>
+            <button
+                onClick={handleSaveManual}
+                disabled={isSaving}
+                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+            >
+              {isSaving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+              <span>保存</span>
+            </button>
           </div>
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">结尾钩子 (Hook)</label>
-            <textarea
-              value={beatSheet.hook}
-              onChange={e => setBeatSheet(prev => ({ ...prev, hook: e.target.value }))}
-              className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
-              placeholder="如何吸引读者看下一章？"
-            />
-          </div>
-          <div className="space-y-2">
-            {beatSheet.emotion_target && (
-              <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-purple-50 text-xs text-purple-700 border border-purple-200 dark:bg-purple-900/20 dark:text-purple-200 dark:border-purple-700">
-                <span className="mr-1">情绪目标</span>
-                <span className="font-semibold">{beatSheet.emotion_target}</span>
+        </div>
+
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          {errorMessage && (
+              <div className="px-3 py-2 rounded-md bg-red-50 text-red-600 text-xs border border-red-200 dark:bg-red-900/20 dark:text-red-300 dark:border-red-800 flex items-center justify-between">
+                <span>{errorMessage}</span>
+                <button
+                    onClick={() => setErrorMessage(null)}
+                    className="ml-3 text-red-400 hover:text-red-600 text-xs"
+                >
+                  关闭
+                </button>
               </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">本章目标 (Goal)</label>
+              <textarea
+                  value={beatSheet.goal}
+                  onChange={e => setBeatSheet(prev => ({ ...prev, goal: e.target.value }))}
+                  className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="主角想要达成什么？"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">核心冲突 (Conflict)</label>
+              <textarea
+                  value={beatSheet.conflict}
+                  onChange={e => setBeatSheet(prev => ({ ...prev, conflict: e.target.value }))}
+                  className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="遇到什么阻碍？"
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">结尾钩子 (Hook)</label>
+              <textarea
+                  value={beatSheet.hook}
+                  onChange={e => setBeatSheet(prev => ({ ...prev, hook: e.target.value }))}
+                  className="w-full h-24 p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none"
+                  placeholder="如何吸引读者看下一章？"
+              />
+            </div>
+            <div className="space-y-2">
+              {beatSheet.emotion_target && (
+                  <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-purple-50 text-xs text-purple-700 border border-purple-200 dark:bg-purple-900/20 dark:text-purple-200 dark:border-purple-700">
+                    <span className="mr-1">情绪目标</span>
+                    <span className="font-semibold">{beatSheet.emotion_target}</span>
+                  </div>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">剧情点 (Beats)</label>
+            </div>
+
+            <div className="space-y-2">
+              {beatSheet.beats.map((beat, index) => (
+                  <div key={index} className="flex gap-3 group">
+                    <div className="pt-1 text-zinc-400 flex flex-col items-center">
+                      {index === 0 && (
+                          <button
+                              onClick={() => handleInsertBeatBefore(0)}
+                              className="mb-1 text-zinc-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                      )}
+                      <div className="cursor-move pt-2">
+                        <GripVertical className="w-4 h-4" />
+                      </div>
+                    </div>
+                    <div className="flex-1">
+                  <textarea
+                      value={beat}
+                      onChange={e => handleUpdateBeat(index, e.target.value)}
+                      className="w-full p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none min-h-[60px]"
+                      placeholder={`剧情点 ${index + 1}`}
+                  />
+                    </div>
+                    <div className="flex items-center gap-2 pt-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <button
+                          onClick={() => handleInsertBeatAfter(index)}
+                          className="text-zinc-400 hover:text-blue-600"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+                      <button
+                          onClick={() => handleDeleteBeat(index)}
+                          className="text-zinc-400 hover:text-red-500"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </div>
+              ))}
+            </div>
+
+            <div className="space-y-2">
+            <textarea
+                value={newBeatInstruction}
+                onChange={e => setNewBeatInstruction(e.target.value)}
+                className="w-full p-2 text-sm rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 focus:ring-2 focus:ring-blue-500 outline-none min-h-[48px]"
+                placeholder="可选：输入简单需求，AI 将生成约100字的剧情点；留空则新增一个空白剧情点"
+            />
+              <button
+                  onClick={handleAddBeat}
+                  disabled={isAddingBeat}
+                  className="w-full py-3 flex items-center justify-center gap-2 text-zinc-500 hover:text-blue-600 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors disabled:opacity-50"
+              >
+                {isAddingBeat ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                <span>添加剧情点（支持AI生成）</span>
+              </button>
+            </div>
+
+            {beatSheet.scenes && beatSheet.scenes.length > 0 && (
+                <div className="mt-6 space-y-3">
+                  <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">场景节奏与情绪</div>
+                  {beatSheet.scenes.map((scene, index) => {
+                    const foreshadows = scene.foreshows || scene.foreshadows;
+                    const reuseCount = foreshadows?.reuse?.length || 0;
+                    const newCount = foreshadows?.new?.length || 0;
+                    return (
+                        <div
+                            key={scene.index ?? index}
+                            className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 bg-white/60 dark:bg-zinc-900/40"
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-mono text-zinc-400">S{scene.index ?? index + 1}</span>
+                              {scene.function && (
+                                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200">
+                            {scene.function}
+                          </span>
+                              )}
+                              {scene.tension && (
+                                  <span
+                                      className={`px-2 py-0.5 rounded-full text-[10px] border ${
+                                          scene.tension === '高'
+                                              ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 border-red-200 dark:border-red-800'
+                                              : scene.tension === '中'
+                                                  ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
+                                                  : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700'
+                                      }`}
+                                  >
+                            张力：{scene.tension}
+                          </span>
+                              )}
+                            </div>
+                            {scene.emotion_curve && (
+                                <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                                  情绪：{scene.emotion_curve}
+                                </div>
+                            )}
+                          </div>
+
+                          {scene.summary && (
+                              <p className="text-sm text-zinc-700 dark:text-zinc-200 leading-relaxed mb-2">
+                                {scene.summary}
+                              </p>
+                          )}
+
+                          <div className="flex flex-wrap gap-2 mt-1 text-[11px]">
+                            {scene.cool_points && scene.cool_points.length > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
+                          爽点×{scene.cool_points.length}
+                        </span>
+                            )}
+                            {scene.reversals && scene.reversals.length > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-700">
+                          反转×{scene.reversals.length}
+                        </span>
+                            )}
+                            {reuseCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700">
+                          回收伏笔×{reuseCount}
+                        </span>
+                            )}
+                            {newCount > 0 && (
+                                <span className="px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
+                          新埋伏笔×{newCount}
+                        </span>
+                            )}
+                          </div>
+                        </div>
+                    );
+                  })}
+                </div>
             )}
           </div>
         </div>
-
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">剧情点 (Beats)</label>
-          </div>
-          
-          <div className="space-y-2">
-            {beatSheet.beats.map((beat, index) => (
-              <div key={index} className="flex gap-3 group">
-                <div className="pt-1 text-zinc-400 flex flex-col items-center">
-                  {index === 0 && (
-                    <button
-                      onClick={() => handleInsertBeatBefore(0)}
-                      className="mb-1 text-zinc-400 hover:text-blue-600 opacity-0 group-hover:opacity-100 transition-opacity"
-                    >
-                      <Plus className="w-3 h-3" />
-                    </button>
-                  )}
-                  <div className="cursor-move pt-2">
-                    <GripVertical className="w-4 h-4" />
-                  </div>
-                </div>
-                <div className="flex-1">
-                  <textarea
-                    value={beat}
-                    onChange={e => handleUpdateBeat(index, e.target.value)}
-                    className="w-full p-3 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-sm resize-none focus:ring-2 focus:ring-blue-500 outline-none min-h-[60px]"
-                    placeholder={`剧情点 ${index + 1}`}
-                  />
-                </div>
-                <div className="flex items-center gap-2 pt-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button
-                    onClick={() => handleInsertBeatAfter(index)}
-                    className="text-zinc-400 hover:text-blue-600"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => handleDeleteBeat(index)}
-                    className="text-zinc-400 hover:text-red-500"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="space-y-2">
-            <textarea
-              value={newBeatInstruction}
-              onChange={e => setNewBeatInstruction(e.target.value)}
-              className="w-full p-2 text-sm rounded-lg border border-dashed border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 focus:ring-2 focus:ring-blue-500 outline-none min-h-[48px]"
-              placeholder="可选：输入简单需求，AI 将生成约100字的剧情点；留空则新增一个空白剧情点"
-            />
-            <button
-              onClick={handleAddBeat}
-              disabled={isAddingBeat}
-              className="w-full py-3 flex items-center justify-center gap-2 text-zinc-500 hover:text-blue-600 border border-dashed border-zinc-300 dark:border-zinc-700 rounded-lg hover:bg-blue-50 dark:hover:bg-blue-900/10 transition-colors disabled:opacity-50"
-            >
-              {isAddingBeat ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-              <span>添加剧情点（支持AI生成）</span>
-            </button>
-          </div>
-
-          {beatSheet.scenes && beatSheet.scenes.length > 0 && (
-            <div className="mt-6 space-y-3">
-              <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">场景节奏与情绪</div>
-              {beatSheet.scenes.map((scene, index) => {
-                const foreshadows = scene.foreshows || scene.foreshadows;
-                const reuseCount = foreshadows?.reuse?.length || 0;
-                const newCount = foreshadows?.new?.length || 0;
-                return (
-                  <div
-                    key={scene.index ?? index}
-                    className="border border-zinc-200 dark:border-zinc-700 rounded-lg p-3 bg-white/60 dark:bg-zinc-900/40"
-                  >
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-mono text-zinc-400">S{scene.index ?? index + 1}</span>
-                        {scene.function && (
-                          <span className="px-2 py-0.5 rounded-full text-[10px] bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200">
-                            {scene.function}
-                          </span>
-                        )}
-                        {scene.tension && (
-                          <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] border ${
-                              scene.tension === '高'
-                                ? 'bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-300 border-red-200 dark:border-red-800'
-                                : scene.tension === '中'
-                                  ? 'bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-800'
-                                  : 'bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 border-zinc-200 dark:border-zinc-700'
-                            }`}
-                          >
-                            张力：{scene.tension}
-                          </span>
-                        )}
-                      </div>
-                      {scene.emotion_curve && (
-                        <div className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                          情绪：{scene.emotion_curve}
-                        </div>
-                      )}
-                    </div>
-
-                    {scene.summary && (
-                      <p className="text-sm text-zinc-700 dark:text-zinc-200 leading-relaxed mb-2">
-                        {scene.summary}
-                      </p>
-                    )}
-
-                    <div className="flex flex-wrap gap-2 mt-1 text-[11px]">
-                      {scene.cool_points && scene.cool_points.length > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-600 dark:text-blue-300 border border-blue-200 dark:border-blue-700">
-                          爽点×{scene.cool_points.length}
-                        </span>
-                      )}
-                      {scene.reversals && scene.reversals.length > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-rose-50 dark:bg-rose-900/20 text-rose-600 dark:text-rose-300 border border-rose-200 dark:border-rose-700">
-                          反转×{scene.reversals.length}
-                        </span>
-                      )}
-                      {reuseCount > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-900/20 text-emerald-600 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-700">
-                          回收伏笔×{reuseCount}
-                        </span>
-                      )}
-                      {newCount > 0 && (
-                        <span className="px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-900/20 text-violet-600 dark:text-violet-300 border border-violet-200 dark:border-violet-700">
-                          新埋伏笔×{newCount}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       </div>
-    </div>
   );
 }

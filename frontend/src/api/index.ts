@@ -195,13 +195,13 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}): Promi
           }
         });
         const refreshJson = await refreshRes.json();
-        
+
         if (refreshJson.code === 0 && refreshJson.data) {
           // Update tokens
           localStorage.setItem('accessToken', refreshJson.data.accessToken);
           localStorage.setItem('refreshToken', refreshJson.data.refreshToken);
           localStorage.setItem('expiresTime', refreshJson.data.expiresTime);
-          
+
           // Retry original request with new token
           const newHeaders = new Headers(options.headers);
           newHeaders.set('Authorization', `Bearer ${refreshJson.data.accessToken}`);
@@ -215,22 +215,34 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}): Promi
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('expiresTime');
       localStorage.removeItem('userId');
-      window.location.href = '/';
+      window.location.href = '/login';
       throw new Error('Token expired');
     }
-    
+
     // If refresh failed or no refresh token, logout
 
   }
 
   const token = localStorage.getItem('accessToken');
-  
+
   const headers = new Headers(options.headers);
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
   headers.set('tenant-id', '1');
 
+  // Guard: require positive points for AI endpoints
+  if (url.startsWith('/app-api/api/ai/')) {
+    const point = useUserStore.getState().userInfo?.point ?? 0;
+    if (point <= 0) {
+      toast.warning('积分不足，无法使用 AI 功能');
+      const body = { code: -1, msg: '积分不足，请先充值或签到获取积分' };
+      return new Response(JSON.stringify(body), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  }
 
   const response = await fetch(url, { ...options, headers });
 
@@ -239,19 +251,19 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}): Promi
     try {
       const refreshToken = localStorage.getItem('refreshToken');
       if (refreshToken) {
-         const refreshRes = await fetch('/app-api/member/auth/refresh-token?refreshToken=' + refreshToken, {
+        const refreshRes = await fetch('/app-api/member/auth/refresh-token?refreshToken=' + refreshToken, {
           method: 'POST',
           headers: {
             'tenant-id': '1'
           }
         });
         const refreshJson = await refreshRes.json();
-        
+
         if (refreshJson.code === 0 && refreshJson.data) {
           localStorage.setItem('accessToken', refreshJson.data.accessToken);
           localStorage.setItem('refreshToken', refreshJson.data.refreshToken);
           localStorage.setItem('expiresTime', refreshJson.data.expiresTime);
-          
+
           const retryHeaders = new Headers(options.headers);
           retryHeaders.set('Authorization', `Bearer ${refreshJson.data.accessToken}`);
           retryHeaders.set('tenant-id', '1');
@@ -264,10 +276,10 @@ const authenticatedFetch = async (url: string, options: RequestInit = {}): Promi
       localStorage.removeItem('refreshToken');
       localStorage.removeItem('expiresTime');
       localStorage.removeItem('userId');
-      window.location.href = '/';
+      window.location.href = '/login';
       throw new Error('Session expired');
     }
-    
+
 
   }
 
@@ -370,9 +382,9 @@ export const login = async (data: LoginParams): Promise<ApiResponse<LoginResult>
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
-    
+
     if (json.code === 0) {
       return {
         success: true,
@@ -402,9 +414,9 @@ export const smsLogin = async (data: SmsLoginParams): Promise<ApiResponse<LoginR
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
-    
+
     if (json.code === 0) {
       return {
         success: true,
@@ -434,9 +446,9 @@ export const sendSmsCode = async (data: SmsSendParams): Promise<ApiResponse<bool
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
-    
+
     if (json.code === 0) {
       return {
         success: true,
@@ -533,8 +545,8 @@ export async function updateVolume(novelId: string, volumeId: string, data: { ti
 }
 
 export const getVolumeMilestones = async (
-  novelId: string,
-  volumeId: string
+    novelId: string,
+    volumeId: string
 ): Promise<ApiResponse<VolumeMilestone[]>> => {
   try {
     const res = await authenticatedFetch(`/app-api/api/novels/${novelId}/volumes/${volumeId}/milestones`, {
@@ -551,9 +563,9 @@ export const getVolumeMilestones = async (
 };
 
 export const replaceVolumeMilestones = async (
-  novelId: string,
-  volumeId: string,
-  milestones: Milestone[]
+    novelId: string,
+    volumeId: string,
+    milestones: Milestone[]
 ): Promise<ApiResponse<null>> => {
   try {
     const existing = await getVolumeMilestones(novelId, volumeId);
@@ -621,9 +633,9 @@ export async function createChapter(novelId: string, volumeId: string, title: st
 }
 
 export async function batchCreateChapters(
-  novelId: string, 
-  volumeId: string, 
-  chapters: any[]
+    novelId: string,
+    volumeId: string,
+    chapters: any[]
 ) {
   try {
     const res = await authenticatedFetch(`/app-api/api/novels/${novelId}/volumes/${volumeId}/chapters/batch`, {
@@ -660,13 +672,13 @@ export interface ProgressChapter {
 }
 
 export const getProgressChapters = async (
-  novelId: string,
-  chapterId: string,
-  maxChars?: number
+    novelId: string,
+    chapterId: string,
+    maxChars?: number
 ): Promise<ApiResponse<ProgressChapter[]>> => {
   try {
     const url = `/app-api/api/novels/${novelId}/chapters/progress?chapterId=${encodeURIComponent(chapterId)}${
-      typeof maxChars === 'number' ? `&maxChars=${encodeURIComponent(String(maxChars))}` : ''
+        typeof maxChars === 'number' ? `&maxChars=${encodeURIComponent(String(maxChars))}` : ''
     }`;
     const res = await authenticatedFetch(url, { method: 'GET' });
     const json = await res.json();
@@ -675,20 +687,20 @@ export const getProgressChapters = async (
       return adapted;
     }
     const normalized: ProgressChapter[] = adapted.data
-      .filter((x): x is ProgressChapter => Boolean(x && typeof x === 'object'))
-      .map((x) => {
-        const item = x as ProgressChapter;
-        const contentExcerpt = typeof item.contentExcerpt === 'string' ? item.contentExcerpt : '';
-        const summary = typeof item.summary === 'string' ? item.summary : contentExcerpt;
-        const title = typeof item.title === 'string' ? item.title : undefined;
-        return {
-          id: String((item as unknown as { id: unknown }).id ?? ''),
-          title,
-          contentExcerpt,
-          summary,
-        };
-      })
-      .filter((x) => Boolean(x.id));
+        .filter((x): x is ProgressChapter => Boolean(x && typeof x === 'object'))
+        .map((x) => {
+          const item = x as ProgressChapter;
+          const contentExcerpt = typeof item.contentExcerpt === 'string' ? item.contentExcerpt : '';
+          const summary = typeof item.summary === 'string' ? item.summary : contentExcerpt;
+          const title = typeof item.title === 'string' ? item.title : undefined;
+          return {
+            id: String((item as unknown as { id: unknown }).id ?? ''),
+            title,
+            contentExcerpt,
+            summary,
+          };
+        })
+        .filter((x) => Boolean(x.id));
     return { success: true, data: normalized };
   } catch (error: unknown) {
     return { success: false, error: error instanceof Error ? error.message : 'Network error' };
@@ -702,14 +714,14 @@ export const updateChapter = async (novelId: string, volumeIdOrChapterId: string
   let updateData: Partial<Chapter>;
 
   if (typeof chapterIdOrData === 'object') {
-     volumeId = 'unknown'; // This will likely fail 404
-     chapterId = volumeIdOrChapterId;
-     updateData = chapterIdOrData;
-     console.warn('updateChapter called without volumeId, this may fail.');
+    volumeId = 'unknown'; // This will likely fail 404
+    chapterId = volumeIdOrChapterId;
+    updateData = chapterIdOrData;
+    console.warn('updateChapter called without volumeId, this may fail.');
   } else {
-     volumeId = volumeIdOrChapterId;
-     chapterId = chapterIdOrData;
-     updateData = data!;
+    volumeId = volumeIdOrChapterId;
+    chapterId = chapterIdOrData;
+    updateData = data!;
   }
 
   try {
@@ -755,10 +767,10 @@ export const updateForeshadowing = async (novelId: string, chapterId: string, fo
 };
 
 export const analyzeForeshadowing = async (
-  chapterId: string, 
-  chapterTitle: string, 
-  content: string, 
-  existingForeshadowing: Foreshadowing[]
+    chapterId: string,
+    chapterTitle: string,
+    content: string,
+    existingForeshadowing: Foreshadowing[]
 ) => {
   try {
     const res = await authenticatedFetch('/app-api/api/ai/analyze-foreshadowing', {
@@ -870,7 +882,7 @@ export const refineText = async (data: { text: string; context?: string; instruc
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse<string>(json);
   } catch (error: any) {
@@ -890,7 +902,7 @@ export const createNovel = async (data: any): Promise<ApiResponse<any>> => {
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -963,7 +975,7 @@ export const updateLore = async (novelId: string, loreId: string, data: any): Pr
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -983,7 +995,7 @@ export const postLore = async (novelId: string, loreId: string, data: any): Prom
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1029,7 +1041,23 @@ export const getChapterContent = async (cid: string): Promise<ApiResponse<string
     const res = await authenticatedFetch(`/app-api/api/novels/chapters/${cid}/content`, {
       method: 'GET'
     });
-    
+
+    const json = await res.json();
+    return adaptResponse(json);
+  } catch (error: any) {
+    return {
+      success: false,
+      error: error.message || 'Network error'
+    };
+  }
+};
+
+export const getChapterSummary = async (cid: string): Promise<ApiResponse<string>> => {
+  try {
+    const res = await authenticatedFetch(`/app-api/api/novels/chapters/${cid}/summary`, {
+      method: 'GET'
+    });
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1045,7 +1073,7 @@ export const deleteNovel = async (id: string): Promise<ApiResponse> => {
     const res = await authenticatedFetch(`/app-api/api/novels/${id}`, {
       method: 'DELETE',
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1093,8 +1121,8 @@ export const saveCharacterKnowledge = async (novelId: string, chapterId: string,
 export const getChapterCharacterKnowledge = async (novelId: string, chapterId: string, characterLoreId?: string): Promise<ApiResponse<any>> => {
   try {
     const url = characterLoreId
-      ? `/app-api/api/novels/${novelId}/chapters/${chapterId}/character-knowledge?characterLoreId=${encodeURIComponent(characterLoreId)}`
-      : `/app-api/api/novels/${novelId}/chapters/${chapterId}/character-knowledge`;
+        ? `/app-api/api/novels/${novelId}/chapters/${chapterId}/character-knowledge?characterLoreId=${encodeURIComponent(characterLoreId)}`
+        : `/app-api/api/novels/${novelId}/chapters/${chapterId}/character-knowledge`;
     const res = await authenticatedFetch(url, { method: 'GET' });
     const json = await res.json();
     return adaptResponse<any>(json);
@@ -1108,7 +1136,7 @@ export const getCharacterKnowledgeTimeline = async (novelId: string, characterLo
     console.log('getCharacterKnowledgeTimeline called:', { novelId, characterLoreId });
     const token = localStorage.getItem('accessToken');
     console.log('Current token:', token ? token.substring(0, 20) + '...' : 'null');
-    
+
     const res = await authenticatedFetch(`/app-api/api/novels/${novelId}/characters/${characterLoreId}/knowledge-timeline`, {
       method: 'GET'
     });
@@ -1155,7 +1183,7 @@ export const parseCommand = async (instruction: string, context: any): Promise<A
       },
       body: JSON.stringify({ instruction, context }),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1167,13 +1195,13 @@ export const parseCommand = async (instruction: string, context: any): Promise<A
 };
 
 export async function suggestChapters(
-  volumeTitle: string, 
-  volumeSummary: string, 
-  existingChapters: string[] = [],
-  context: string = '',
-  count: number = 5,
-  previousChapterCount: number = 0,
-  startIndex?: number
+    volumeTitle: string,
+    volumeSummary: string,
+    existingChapters: string[] = [],
+    context: string = '',
+    count: number = 5,
+    previousChapterCount: number = 0,
+    startIndex?: number
 ) {
   try {
     const res = await authenticatedFetch('/app-api/api/ai/suggest-chapters', {
@@ -1208,8 +1236,8 @@ export async function analyzeLore(novelId: string) {
 export const chatWithAI = async (prompt: string, novelId?: string, context?: ChatContext, history?: Array<{ role: 'user' | 'assistant'; content: string }>, referencedSettings?: ReferencedSetting[]): Promise<ApiResponse<string>> => {
   try {
     const historyText = (history && history.length > 0)
-      ? history.map(h => `${h.role === 'user' ? '用户' : '助手'}: ${h.content}`).join('\n')
-      : '';
+        ? history.map(h => `${h.role === 'user' ? '用户' : '助手'}: ${h.content}`).join('\n')
+        : '';
     const finalPrompt = historyText ? `对话上下文：\n${historyText}\n\n当前问题：\n${prompt}` : prompt;
     const res = await authenticatedFetch('/app-api/api/ai/chat', {
       method: 'POST',
@@ -1218,7 +1246,7 @@ export const chatWithAI = async (prompt: string, novelId?: string, context?: Cha
       },
       body: JSON.stringify({ prompt: finalPrompt, novelId, context, history, referencedSettings }),
     });
-    
+
     const json = await res.json();
     if (json && json.code === 0 && json.data && typeof json.data === 'string') {
       // keep as-is
@@ -1235,20 +1263,20 @@ export const chatWithAI = async (prompt: string, novelId?: string, context?: Cha
 };
 
 export const chatWithAIStream = async (
-  prompt: string, 
-  onChunk: (chunk: string) => void,
-  onDone: () => void,
-  onError: (err: string) => void,
-  signal?: AbortSignal,
-  novelId?: string, 
-  context?: ChatContext,
-  history?: Array<{ role: 'user' | 'assistant'; content: string }>,
-  referencedSettings?: ReferencedSetting[]
+    prompt: string,
+    onChunk: (chunk: string) => void,
+    onDone: () => void,
+    onError: (err: string) => void,
+    signal?: AbortSignal,
+    novelId?: string,
+    context?: ChatContext,
+    history?: Array<{ role: 'user' | 'assistant'; content: string }>,
+    referencedSettings?: ReferencedSetting[]
 ) => {
   try {
     const historyText = (history && history.length > 0)
-      ? history.map(h => `${h.role === 'user' ? '用户' : '助手'}: ${h.content}`).join('\n')
-      : '';
+        ? history.map(h => `${h.role === 'user' ? '用户' : '助手'}: ${h.content}`).join('\n')
+        : '';
     const finalPrompt = historyText ? `对话上下文：\n${historyText}\n\n当前问题：\n${prompt}` : prompt;
     const res = await authenticatedFetch('/app-api/api/ai/chat/stream', {
       method: 'POST',
@@ -1292,7 +1320,7 @@ export const chatWithAIStream = async (
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-      
+
       const chunk = decoder.decode(value, { stream: true });
       buffer += chunk;
       let lineBreakIndex = buffer.search(/\r?\n/);
@@ -1356,9 +1384,9 @@ export const chatWithAIStream = async (
     }
   } catch (error: any) {
     if (error.name === 'AbortError') {
-        // Ignore abort error
+      // Ignore abort error
     } else {
-        onError(error.message || 'Network error');
+      onError(error.message || 'Network error');
     }
   }
 };
@@ -1372,7 +1400,7 @@ export const generateInspiration = async (idea?: string): Promise<ApiResponse<{ 
       },
       body: JSON.stringify({ idea }),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1392,7 +1420,7 @@ export const recommendTags = async (title: string, description: string): Promise
       },
       body: JSON.stringify({ title, description }),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1412,7 +1440,7 @@ export const generateCoreSettings = async (data: { title: string; description: s
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1432,11 +1460,11 @@ export const generateChapterIdeas = async (data: { volumeTitle: string; volumeSu
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     // Fix: Extract ideas array from nested data structure { ideas: [...] }
     if (json.code === 0 && json.data && Array.isArray(json.data.ideas)) {
-        json.data = json.data.ideas;
+      json.data = json.data.ideas;
     }
     return adaptResponse(json);
   } catch (error: any) {
@@ -1447,10 +1475,10 @@ export const generateChapterIdeas = async (data: { volumeTitle: string; volumeSu
   }
 };
 
-export const generateBeatSheet = async (data: { 
-  title: string; 
-  summary: string; 
-  previousContext?: string; 
+export const generateBeatSheet = async (data: {
+  title: string;
+  summary: string;
+  previousContext?: string;
   previousChapterContent?: string;
   volumeSummary?: string;
   characters?: any[];
@@ -1465,7 +1493,7 @@ export const generateBeatSheet = async (data: {
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1510,7 +1538,7 @@ export const generateMilestones = async (data: { volumeTitle: string; volumeSumm
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1530,7 +1558,7 @@ export const generateBridgeBeats = async (data: { startMilestone: Milestone; end
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1541,10 +1569,10 @@ export const generateBridgeBeats = async (data: { startMilestone: Milestone; end
   }
 };
 
-export const generateChaptersFromMilestone = async (data: { 
-  milestoneTitle: string; 
-  milestoneSummary: string; 
-  count: number; 
+export const generateChaptersFromMilestone = async (data: {
+  milestoneTitle: string;
+  milestoneSummary: string;
+  count: number;
   volumeContext?: string;
   characters?: Array<{ id: string; name?: string; title?: string; role?: string; content?: string; description?: string; bio?: string }>;
   nextMilestone?: { title: string; summary: string };
@@ -1558,7 +1586,7 @@ export const generateChaptersFromMilestone = async (data: {
       },
       body: JSON.stringify(data),
     });
-    
+
     const json = await res.json();
     return adaptResponse(json);
   } catch (error: any) {
@@ -1637,8 +1665,8 @@ export const suggestPlotCharacters = async (params: { plotTitle: string; plotSum
 
 // 导入设定（支持 FormData 或 JSON）
 export const importLore = async (
-  novelId: string,
-  data: { content: string; fileName: string; type?: string } | FormData
+    novelId: string,
+    data: { content: string; fileName: string; type?: string } | FormData
 ): Promise<ApiResponse<any>> => {
   try {
     const url = `/app-api/api/novels/${novelId}/lore/import`;
@@ -1753,20 +1781,20 @@ export const reorderChapters = async (novelId: string, volumeId: string, chapter
 };
 
 export const generateChapterContent = async (
-  data: { 
-    chapter: Chapter; 
-    previousChapter?: Chapter; 
-    volumeSummary?: string; 
-    globalLore?: string; 
-    instruction?: string; 
-    characters?: any[];
-    foreshadowing?: Foreshadowing[];
-    coreSettings?: unknown;
-    milestoneContext?: unknown;
-    volumeChaptersPlan?: Array<{ id: string; title?: string; summary?: string }>;
-  },
-  onChunk?: (chunk: string) => void,
-  signal?: AbortSignal
+    data: {
+      chapter: Chapter;
+      previousChapter?: Chapter;
+      volumeSummary?: string;
+      globalLore?: string;
+      instruction?: string;
+      characters?: any[];
+      foreshadowing?: Foreshadowing[];
+      coreSettings?: unknown;
+      milestoneContext?: unknown;
+      volumeChaptersPlan?: Array<{ id: string; title?: string; summary?: string }>;
+    },
+    onChunk?: (chunk: string) => void,
+    signal?: AbortSignal
 ): Promise<ApiResponse<string>> => {
   try {
     const res = await authenticatedFetch('/app-api/api/ai/generate-chapter-content', {
@@ -1790,7 +1818,7 @@ export const generateChapterContent = async (
     let doneReceived = false;
 
     if (!reader) {
-        return { success: false, error: 'Stream not supported' };
+      return { success: false, error: 'Stream not supported' };
     }
 
     try {
@@ -1838,11 +1866,11 @@ export const generateChapterContent = async (
       }
       throw e;
     }
-    
+
     return { success: true, data: fullContent };
   } catch (error: any) {
     if (error.name === 'AbortError' || signal?.aborted) {
-        return { success: false, data: '' };
+      return { success: false, data: '' };
     }
     return {
       success: false,

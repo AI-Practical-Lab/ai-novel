@@ -34,6 +34,7 @@ public interface NovelProjectService {
     void updateRelations(Long projectId, String edgesJson, String positionsJson);
     void updateForeshadowing(Long projectId, Long chapterId, List<NovelForeshadowingDO> list);
     String getChapterContent(Long chapterId);
+    String getChapterSummary(Long chapterId);
     String getChapterBeatSheet(Long chapterId);
     List<NovelChapterDO> getChaptersProgress(Long projectId, Long chapterId);
     List<NovelVolumeMilestoneDO> getMilestones(Long projectId, Long volumeId);

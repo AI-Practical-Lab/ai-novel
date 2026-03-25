@@ -356,6 +356,14 @@ public class NovelProjectServiceImpl implements NovelProjectService {
         return ch != null ? ch.getContent() : null;
     }
     @Override
+    public String getChapterSummary(Long chapterId) {
+        NovelChapterDO ch = chapterMapper.selectById(chapterId);
+        if (ch != null && ch.getProjectId() != null) {
+            assertOwner(ch.getProjectId());
+        }
+        return ch != null ? ch.getSummary() : null;
+    }
+    @Override
     public String getChapterBeatSheet(Long chapterId) {
         NovelChapterDO ch = chapterMapper.selectById(chapterId);
         if (ch != null && ch.getProjectId() != null) {

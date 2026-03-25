@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import ReactMarkdown from 'react-markdown';
 import { ArrowLeft, Home, BookOpen, Settings, History, Bot, Wand2, Loader2, Send, Save, CheckCircle2, Plus, MoreVertical, ChevronDown, ChevronRight, ChevronUp, Sparkles, Trash2, Copy, Square, Network, Users, ArrowUp, ArrowDown, Map as MapIcon, Flag, Activity, List, ChevronLeft, AlignLeft, RotateCcw, X, Download, Video, Info } from 'lucide-react';
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { chatWithAIStream, chatWithAI, getNovel, updateChapter, updateLore,postLore, updateVolume, createVolume, createChapter, batchCreateChapters, deleteVolume, deleteChapter, createLore, createLorePost, deleteLore, generateChapterContent, generateCharacters, reorderChapters, refineText, updateForeshadowing, getForeshadowingList, analyzeForeshadowing, importLore, exportNovelLore, exportNovelChapters, getChapterContent, getChapterBeatSheet, getVolumeMilestones, type NovelDetail, type Chapter, type Volume, type ReferenceItem, type Foreshadowing, createLorePostObj, updateNovel, saveCharacterKnowledge, getChapterCharacterKnowledge, getCharacterKnowledgeTimeline, getProgressChapters } from '@/api';
+import { chatWithAIStream, chatWithAI, getNovel, updateChapter, updateLore,postLore, updateVolume, createVolume, createChapter, batchCreateChapters, deleteVolume, deleteChapter, createLore, createLorePost, deleteLore, generateChapterContent, generateCharacters, reorderChapters, refineText, updateForeshadowing, getForeshadowingList, analyzeForeshadowing, importLore, exportNovelLore, exportNovelChapters, getChapterContent, getChapterSummary, getChapterBeatSheet, getVolumeMilestones, type NovelDetail, type Chapter, type Volume, type ReferenceItem, type Foreshadowing, createLorePostObj, updateNovel, saveCharacterKnowledge, getChapterCharacterKnowledge, getCharacterKnowledgeTimeline, getProgressChapters } from '@/api';
 import { LORE_CATEGORIES } from '@/utils/constants';
 import { SmartTextarea, type ReferenceOption } from '@/components/ui/SmartTextarea';
 import { useNovelReferences } from '@/hooks/useNovelReferences';
@@ -1290,14 +1290,24 @@ export default function EditorLayout() {
           const firstChapter = res.data.volumes?.[0]?.chapters?.[0];
           if (firstChapter) {
             setCurrentChapter(firstChapter);
-            // Fetch content for the first chapter
+            // Fetch content and summary for the first chapter
             try {
-              const contentRes = await getChapterContent(firstChapter.id);
-              if (contentRes.success) {
-                setCurrentChapter(prev => prev ? { ...prev, content: contentRes.data || '' } : prev);
+              const [contentRes, summaryRes] = await Promise.all([
+                getChapterContent(firstChapter.id),
+                getChapterSummary(firstChapter.id)
+              ]);
+              if (contentRes.success || summaryRes.success) {
+                setCurrentChapter(prev => {
+                  if (!prev) return prev;
+                  return {
+                    ...prev,
+                    content: contentRes.success ? (contentRes.data || '') : prev.content,
+                    summary: summaryRes.success ? (summaryRes.data || '') : prev.summary
+                  };
+                });
               }
             } catch (error) {
-              console.error('Failed to load first chapter content:', error);
+              console.error('Failed to load first chapter content/summary:', error);
             }
           }
 
@@ -4059,14 +4069,24 @@ ${locationPrompt || '请根据上述空间设置，将其拆解并丰富为具�
                                       e.stopPropagation();
                                       setCurrentChapter(chapter);
                                       setActiveTab('editor');
-                                      // Fetch chapter content
+                                      // Fetch chapter content and summary
                                       try {
-                                        const contentRes = await getChapterContent(chapter.id);
-                                        if (contentRes.success) {
-                                          setCurrentChapter(prev => prev?.id === chapter.id ? { ...prev, content: contentRes.data || '' } : prev);
+                                        const [contentRes, summaryRes] = await Promise.all([
+                                          getChapterContent(chapter.id),
+                                          getChapterSummary(chapter.id)
+                                        ]);
+                                        if (contentRes.success || summaryRes.success) {
+                                          setCurrentChapter(prev => {
+                                            if (prev?.id !== chapter.id) return prev;
+                                            return {
+                                              ...prev,
+                                              content: contentRes.success ? (contentRes.data || '') : prev.content,
+                                              summary: summaryRes.success ? (summaryRes.data || '') : prev.summary
+                                            };
+                                          });
                                         }
                                       } catch (error) {
-                                        console.error('Failed to load chapter content:', error);
+                                        console.error('Failed to load chapter content/summary:', error);
                                         toast.error('加载章节内容失败');
                                       }
                                     }}
@@ -4660,6 +4680,34 @@ ${locationPrompt || '请根据上述空间设置，将其拆解并丰富为具�
                                         isLast: current >= total
                                       };
                                     })()}
+                                    onSaveSummary={async (newSummary) => {
+                                      const updatedChapter = { ...currentChapter, summary: newSummary };
+                                      setCurrentChapter(updatedChapter);
+
+                                      const volumeIdForChapter = novel?.volumes.find(v =>
+                                          v.chapters.some(c => c.id === currentChapter.id)
+                                      )?.id;
+
+                                      if (volumeIdForChapter) {
+                                        const res = await updateChapter(id!, volumeIdForChapter, currentChapter.id, { summary: newSummary });
+                                        if (!res.success) {
+                                          throw new Error(res.error || '保存失败');
+                                        }
+                                      } else {
+                                        throw new Error('未找到章节对应的卷信息');
+                                      }
+
+                                      setNovel(prev => {
+                                        if (!prev) return null;
+                                        const newVolumes = prev.volumes.map(vol => ({
+                                          ...vol,
+                                          chapters: vol.chapters.map(c =>
+                                              c.id === currentChapter.id ? { ...c, summary: newSummary } : c
+                                          )
+                                        }));
+                                        return { ...prev, volumes: newVolumes };
+                                      });
+                                    }}
                                     onSave={async (newBeatSheet) => {
                                       // Update local state
                                       const updatedChapter = { ...currentChapter, beatSheet: newBeatSheet };
@@ -4670,10 +4718,18 @@ ${locationPrompt || '请根据上述空间设置，将其拆解并丰富为具�
                                       const volumeIdForChapter = novel?.volumes.find(v =>
                                           v.chapters.some(c => c.id === currentChapter.id)
                                       )?.id;
-                                      if (volumeIdForChapter) {
-                                        await updateChapter(id!, volumeIdForChapter, currentChapter.id, { beatSheet: newBeatSheet });
+                                      try {
+                                        if (volumeIdForChapter) {
+                                          const res = await updateChapter(id!, volumeIdForChapter, currentChapter.id, { beatSheet: newBeatSheet });
+                                          if (!res.success) {
+                                            throw new Error(res.error || '保存失败');
+                                          }
+                                        } else {
+                                          throw new Error('未找到章节对应的卷信息');
+                                        }
+                                      } finally {
+                                        setIsSaving(false);
                                       }
-                                      setIsSaving(false);
 
                                       // Update Novel State (Source of Truth) to prevent data loss on switch
                                       setNovel(prev => {

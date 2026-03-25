@@ -1049,6 +1049,11 @@ public class NovelController {
         return success(projectService.getChapterContent(cid));
     }
 
+    @GetMapping("/chapters/{cid}/summary")
+    public CommonResult<String> getChapterSummary(@PathVariable("cid") Long cid) {
+        return success(projectService.getChapterSummary(cid));
+    }
+
     @GetMapping("/chapters/{cid}/beat-sheet")
     public CommonResult<String> getChapterBeatSheet(@PathVariable("cid") Long cid) {
         return success(projectService.getChapterBeatSheet(cid));

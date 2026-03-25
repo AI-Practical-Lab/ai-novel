@@ -15,14 +15,20 @@ import cn.hb.wk.dal.mysql.project.NovelProjectMapper;
 import cn.hb.wk.dal.mysql.project.NovelVolumeMapper;
 import cn.hb.wk.dal.mysql.relation.NovelRelationsMapper;
 import cn.hb.wk.dal.mysql.milestone.NovelVolumeMilestoneMapper;
+import cn.hutool.core.util.StrUtil;
 import jakarta.annotation.Resource;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.validation.annotation.Validated;
+
+import java.nio.file.AccessDeniedException;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @Validated
 public class NovelProjectServiceImpl implements NovelProjectService {
@@ -40,6 +46,9 @@ public class NovelProjectServiceImpl implements NovelProjectService {
     private NovelRelationsMapper relationsMapper;
     @Resource
     private NovelVolumeMilestoneMapper milestoneMapper;
+
+    @Value("${spring.ai.dashscope.api-key:}")
+    private String apiKey;
 
     @Override
     public List<NovelProjectDO> listProjects() {
@@ -112,10 +121,34 @@ public class NovelProjectServiceImpl implements NovelProjectService {
         projectMapper.updateById(update);
     }
 
+    private void deleteBailianFile(String fileId) {
+        if (StrUtil.isBlank(fileId)) {
+            return;
+        }
+        try {
+            cn.hutool.http.HttpResponse response = cn.hutool.http.HttpRequest.delete("https://dashscope.aliyuncs.com/compatible-mode/v1/files/" + fileId)
+                    .header("Authorization", "Bearer " + apiKey)
+                    .execute();
+            if (!response.isOk()) {
+                log.error("Failed to delete file from Bailian platform: {}, fileId: {}", response.body(), fileId);
+            } else {
+                log.info("Successfully deleted file from Bailian platform, fileId: {}", fileId);
+            }
+        } catch (Exception e) {
+            log.error("Exception occurred while deleting file from Bailian platform, fileId: {}", fileId, e);
+        }
+    }
+
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteProject(Long id) {
         assertOwner(id);
+
+        NovelProjectDO projectDO = projectMapper.selectById(id);
+        if (projectDO != null && StrUtil.isNotBlank(projectDO.getFileId())) {
+            deleteBailianFile(projectDO.getFileId());
+        }
+
         List<NovelVolumeDO> volumes = volumeMapper.selectListByProjectId(id);
         for (NovelVolumeDO vol : volumes) {
             List<NovelChapterDO> chapters = chapterMapper.selectListByVolumeId(vol.getId());
@@ -355,6 +388,7 @@ public class NovelProjectServiceImpl implements NovelProjectService {
         }
         return ch != null ? ch.getContent() : null;
     }
+
     @Override
     public String getChapterSummary(Long chapterId) {
         NovelChapterDO ch = chapterMapper.selectById(chapterId);
@@ -363,6 +397,7 @@ public class NovelProjectServiceImpl implements NovelProjectService {
         }
         return ch != null ? ch.getSummary() : null;
     }
+
     @Override
     public String getChapterBeatSheet(Long chapterId) {
         NovelChapterDO ch = chapterMapper.selectById(chapterId);

@@ -498,10 +498,17 @@ export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSavi
                             )}
                           </div>
 
-                          {scene.summary && (
-                              <p className="text-sm text-zinc-700 dark:text-zinc-200 leading-relaxed mb-2">
-                                {scene.summary}
-                              </p>
+                          {scene.summary !== undefined && (
+                              <textarea
+                                  value={scene.summary}
+                                  onChange={(e) => {
+                                    const newScenes = [...(beatSheet.scenes || [])];
+                                    newScenes[index] = { ...newScenes[index], summary: e.target.value };
+                                    setBeatSheet(prev => ({ ...prev, scenes: newScenes }));
+                                  }}
+                                  className="w-full text-sm text-zinc-700 dark:text-zinc-200 leading-relaxed mb-2 bg-zinc-50/50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-700 hover:border-zinc-300 dark:hover:border-zinc-600 focus:border-blue-500 focus:bg-white dark:focus:bg-zinc-900 focus:ring-1 focus:ring-blue-500 rounded-md p-2.5 resize-y min-h-[80px] transition-all outline-none"
+                                  placeholder="场景描述..."
+                              />
                           )}
 
                           <div className="flex flex-wrap gap-2 mt-1 text-[11px]">

@@ -669,18 +669,24 @@ public class AiController {
 
     @PostMapping("/generate-chapter-content")
     public Object generateChapterContent(@RequestBody AiChapterContentReqVO reqVO) {
-        
-        Object chapter = reqVO.getChapter();
-        Object previousChapter = reqVO.getPreviousChapter();
-        String volumeSummary = reqVO.getVolumeSummary();
-        Object globalLore = reqVO.getGlobalLore();
-        Object instruction = reqVO.getInstruction();
+
+        // 获取上一章的完整正文
+        Object previousChapterObj = reqVO.getPreviousChapter();
+        if (previousChapterObj instanceof java.util.Map) {
+            try {
+                java.util.Map<String, Object> prevMap = (java.util.Map<String, Object>) previousChapterObj;
+                if (prevMap.containsKey("id")) {
+                    Long prevId = Long.valueOf(String.valueOf(prevMap.get("id")));
+                    String fullContent = projectService.getChapterContent(prevId);
+                    if (fullContent != null) {
+                        prevMap.put("content", fullContent);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("Failed to fetch full previous chapter content", e);
+            }
+        }
         Boolean stream = reqVO.getStream();
-        java.util.List<Object> characters = reqVO.getCharacters();
-        java.util.List<Object> foreshadowing = reqVO.getForeshadowing();
-        Object coreSettings = reqVO.getCoreSettings();
-        Object milestoneContextObj = reqVO.getMilestoneContext();
-        java.util.List<Object> volumeChaptersPlan = reqVO.getVolumeChaptersPlan();
         java.util.List<Object> characterKnowledge = reqVO.getCharacterKnowledge();
         ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
         String system = chapterPromptBuilder.buildSystemPrompt();

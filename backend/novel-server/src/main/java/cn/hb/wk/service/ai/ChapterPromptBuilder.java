@@ -82,7 +82,21 @@ public class ChapterPromptBuilder {
         StringBuilder sbUser = new StringBuilder();
         sbUser.append("分卷大纲：").append(volumeSummary != null ? volumeSummary : "").append("\n");
         sbUser.append("当前章节：").append(String.valueOf(chapter)).append("\n");
-        sbUser.append("上一章：").append(String.valueOf(previousChapter)).append("\n");
+
+        if (previousChapter != null) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode prevNode = mapper.valueToTree(previousChapter);
+                String prevTitle = prevNode.has("title") && !prevNode.get("title").isNull() ? prevNode.get("title").asText() : "无标题";
+                String prevContent = prevNode.has("content") && !prevNode.get("content").isNull() ? prevNode.get("content").asText() : "";
+                sbUser.append("上一章标题：").append(prevTitle).append("\n");
+                if (!prevContent.isEmpty()) {
+                    sbUser.append("上一章正文（供参考衔接）：\n").append(prevContent).append("\n\n");
+                }
+            } catch (Exception e) {
+                sbUser.append("上一章：").append(String.valueOf(previousChapter)).append("\n");
+            }
+        }
+
         sbUser.append("设定集：").append(String.valueOf(globalLore)).append("\n");
         if (coreSettings != null) {
             try {

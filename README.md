@@ -57,12 +57,8 @@
    ```
 
 3. **配置环境变量**
-   在根目录创建 `.env` 文件，填入你的 AI API Key：
-   ```env
-   DEEPSEEK_API_KEY=your_api_key_here
-   # 或者
-   OPENAI_API_KEY=your_api_key_here
-   ```
+   
+
 
 4. **启动开发服务器**
    ```bash

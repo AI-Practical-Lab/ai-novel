@@ -1142,6 +1142,7 @@ export const getCharacterKnowledgeTimeline = async (novelId: string, characterLo
 };
 
 export interface ReferenceItem {
+  id: string;
   type: 'chapter' | 'bio' | 'lore' | 'summary';
   title: string;
   content: string;

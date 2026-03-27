@@ -15,7 +15,7 @@ export function useNovelReferences(novel: NovelDetail | null): ReferenceOption[]
         if (vol.chapters) {
             vol.chapters.forEach((chap: Chapter) => {
                 refs.push({
-                id: `chap_${chap.id}`,
+                id: chap.id,
                 type: 'chapter',
                 label: chap.title,
                 data: chap

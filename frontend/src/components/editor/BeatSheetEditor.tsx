@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Save, Loader2, Wand2, Plus, GripVertical, Trash2 } from 'lucide-react';
-import { generateBeatSheet, generateBeat, getChapterBeatSheet, type BeatSheet, type Chapter, type CoreSettings } from '@/api';
+import { generateBeatSheet, generateBeat, getChapterBeatSheet, chatWithAI, type BeatSheet, type Chapter, type CoreSettings } from '@/api';
 
 type SceneForeshadows = {
   reuse?: string[];
@@ -50,6 +50,7 @@ export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSavi
 
   const [summary, setSummary] = useState(chapter.summary || '');
   const [isSavingSummary, setIsSavingSummary] = useState(false);
+  const [isAnalyzingSummary, setIsAnalyzingSummary] = useState(false);
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isAddingBeat, setIsAddingBeat] = useState(false);
@@ -291,6 +292,30 @@ export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSavi
     }
   };
 
+  const handleAnalyzeSummary = async () => {
+    if (!chapter.content) {
+      toast.error('正文为空，无法分析');
+      return;
+    }
+
+    setIsAnalyzingSummary(true);
+    try {
+      const prompt = `请阅读以下章节正文，提炼出本章的故事摘要与核心事件（约100-200字，用于作为章纲）。只返回摘要文本，不要返回任何其他解释性内容。\n\n正文：\n${chapter.content}`;
+      const res = await chatWithAI(prompt);
+      if (res.success && res.data) {
+        setSummary(res.data);
+        toast.success('章纲分析完成，请点击保存');
+      } else {
+        toast.error('分析失败');
+      }
+    } catch (error) {
+      console.error(error);
+      toast.error('分析出错');
+    } finally {
+      setIsAnalyzingSummary(false);
+    }
+  };
+
   return (
       <div className="h-full flex flex-col bg-zinc-50 dark:bg-zinc-900/30 rounded-xl border border-zinc-200 dark:border-zinc-800 overflow-hidden">
         {/* Chapter Summary Section */}
@@ -300,14 +325,26 @@ export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSavi
               <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">本章章纲</h3>
               <p className="text-sm text-zinc-500">本章的故事摘要与核心事件</p>
             </div>
-            <button
-                onClick={handleSaveSummary}
-                disabled={isSavingSummary}
-                className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
-            >
-              {isSavingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
-              <span>保存章纲</span>
-            </button>
+            <div className="flex items-center gap-2">
+              {chapter.content && (!summary || summary.trim() === '') && (
+                  <button
+                      onClick={handleAnalyzeSummary}
+                      disabled={isAnalyzingSummary}
+                      className="px-3 py-1.5 bg-purple-100 text-purple-600 rounded-lg hover:bg-purple-200 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isAnalyzingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
+                    <span>AI 分析章纲</span>
+                  </button>
+              )}
+              <button
+                  onClick={handleSaveSummary}
+                  disabled={isSavingSummary}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2 disabled:opacity-50"
+              >
+                {isSavingSummary ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                <span>保存章纲</span>
+              </button>
+            </div>
           </div>
           <textarea
               value={summary}
@@ -383,11 +420,18 @@ export default function BeatSheetEditor({ chapter, onSave, onSaveSummary, isSavi
                   placeholder="如何吸引读者看下一章？"
               />
             </div>
-            <div className="space-y-2">
-              {beatSheet.emotion_target && (
-                  <div className="inline-flex items-center px-2.5 py-1 rounded-full bg-purple-50 text-xs text-purple-700 border border-purple-200 dark:bg-purple-900/20 dark:text-purple-200 dark:border-purple-700">
-                    <span className="mr-1">情绪目标</span>
-                    <span className="font-semibold">{beatSheet.emotion_target}</span>
+            <div className="space-y-2 md:col-span-3">
+              {beatSheet.emotion_target !== undefined && (
+                  <div className="inline-flex items-start px-2.5 py-1.5 rounded-xl bg-purple-50 text-xs text-purple-700 border border-purple-200 dark:bg-purple-900/20 dark:text-purple-200 dark:border-purple-700 w-full">
+                    <span className="mr-1 whitespace-nowrap mt-0.5 shrink-0">情绪目标</span>
+                    <span
+                        className="font-semibold outline-none focus:bg-white dark:focus:bg-zinc-800 focus:ring-1 focus:ring-purple-400 rounded px-1 cursor-text w-full break-words"
+                        contentEditable
+                        suppressContentEditableWarning
+                        onBlur={e => setBeatSheet(prev => ({ ...prev, emotion_target: e.currentTarget.textContent || '' }))}
+                    >
+                  {beatSheet.emotion_target}
+                </span>
                   </div>
               )}
             </div>

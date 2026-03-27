@@ -6,7 +6,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 public class ChapterPromptBuilder {
     public String buildSystemPrompt() {
         return "### 角色设定\n"
-                + "你是一位长期连载的白金网文作者，擅长写节奏紧凑、爽点密集、极度口语化的小说章节。\n\n"
+                + "你是一位长期连载的白金网文作者，擅长写节奏紧凑、爽点密集、极度口语化的小说章节。\n"
+                + "你的核心任务是：根据用户提供的【当前章节标题】、【当前章节概述】、【当前章节细纲】等信息，生成（或续写）**当前章节的正文内容**。绝不要输出除了小说正文以外的任何分析、总结、对话或大纲格式。\n\n"
                 + "### 去AI味与网文风格硬性规则\n"
                 + "1. 禁用论文式逻辑连接词：不要出现\"首先\"\"其次\"\"再者\"\"总之\"\"综上所述\"\"显而易见\"等。\n"
                 + "2. 禁用翻译腔和西幻腔：避免使用\"噢\"\"该死的\"\"不得不承认\"\"如同...一般\"\"看在...的份上\"等，改用自然中文口语。\n"
@@ -81,7 +82,28 @@ public class ChapterPromptBuilder {
         }
         StringBuilder sbUser = new StringBuilder();
         sbUser.append("分卷大纲：").append(volumeSummary != null ? volumeSummary : "").append("\n");
-        sbUser.append("当前章节：").append(String.valueOf(chapter)).append("\n");
+
+        if (chapter != null) {
+            try {
+                com.fasterxml.jackson.databind.JsonNode chapterNode = mapper.valueToTree(chapter);
+                String title = chapterNode.has("title") && !chapterNode.get("title").isNull() ? chapterNode.get("title").asText() : "无标题";
+                String summary = chapterNode.has("summary") && !chapterNode.get("summary").isNull() ? chapterNode.get("summary").asText() : "";
+                String content = chapterNode.has("content") && !chapterNode.get("content").isNull() ? chapterNode.get("content").asText() : "";
+
+                sbUser.append("当前章节标题：").append(title).append("\n");
+                if (!summary.isEmpty()) {
+                    sbUser.append("当前章节概述：").append(summary).append("\n");
+                }
+                if (chapterNode.has("beatSheet") && !chapterNode.get("beatSheet").isNull()) {
+                    sbUser.append("当前章节细纲(BeatSheet)：").append(mapper.writeValueAsString(chapterNode.get("beatSheet"))).append("\n");
+                }
+                if (!content.isEmpty()) {
+                    sbUser.append("当前章节已写正文（请接着往下写）：\n").append(content).append("\n\n");
+                }
+            } catch (Exception e) {
+                sbUser.append("当前章节：").append(String.valueOf(chapter)).append("\n");
+            }
+        }
 
         if (previousChapter != null) {
             try {

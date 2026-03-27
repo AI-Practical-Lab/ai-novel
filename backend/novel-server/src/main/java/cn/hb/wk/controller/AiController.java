@@ -207,6 +207,38 @@ public class AiController {
                 log.info("loaded " + loadedNames.size() + " setting,  characters=" + settingsText.length());
                 messages.add(new SystemMessage(settingsText.toString()));
             }
+            // 处理 context.references 中的引用内容（包括通过@引用的章节）
+            if (node.has("context") && node.get("context").has("references") && node.get("context").get("references").isArray()) {
+                StringBuilder referencesText = new StringBuilder();
+                for (com.fasterxml.jackson.databind.JsonNode r : node.get("context").get("references")) {
+                    String type = r.has("type") && !r.get("type").isNull() ? r.get("type").asText() : "";
+                    String title = r.has("title") && !r.get("title").isNull() ? r.get("title").asText() : "";
+                    String content = r.has("content") && !r.get("content").isNull() ? r.get("content").asText() : "";
+                    // 如果内容为空且是章节类型，尝试从后端查询
+                    if (content.isEmpty() && "chapter".equals(type) && r.has("id") && !r.get("id").isNull()) {
+                        try {
+                            String chapterIdStr = r.get("id").asText();
+                            if (chapterIdStr != null && !chapterIdStr.isEmpty()) {
+                                Long chapterId = Long.parseLong(chapterIdStr);
+                                content = projectService.getChapterContent(chapterId);
+                                if (content == null) content = "";
+                            }
+                        } catch (Exception e) {
+                            System.out.println("Failed to load chapter content for id=" + r.get("id") + ", error=" + e.getMessage());
+                        }
+                    }
+                    if (content.isEmpty()) continue;
+                    // 章节类型特殊处理
+                    if ("chapter".equals(type)) {
+                        referencesText.append("章节《").append(title).append("》正文内容：\n").append(content).append("\n\n");
+                    } else {
+                        referencesText.append(title).append("：\n").append(content).append("\n\n");
+                    }
+                }
+                if (referencesText.length() > 0) {
+                    messages.add(new SystemMessage("引用的参考资料：\n" + referencesText.toString()));
+                }
+            }
             if (node.has("history") && node.get("history").isArray()) {
                 for (com.fasterxml.jackson.databind.JsonNode h : node.get("history")) {
                     String role = h.has("role") && !h.get("role").isNull() ? h.get("role").asText() : null;
@@ -328,6 +360,38 @@ public class AiController {
             if (settingsText.length() > 0) {
                 System.out.println("loaded " + settingsText.toString().split("\n:\n").length + " setting,  characters=" + settingsText.length());
                 messages.add(new SystemMessage(settingsText.toString()));
+            }
+            // 处理 context.references 中的引用内容（包括通过@引用的章节）
+            if (node.has("context") && node.get("context").has("references") && node.get("context").get("references").isArray()) {
+                StringBuilder referencesText = new StringBuilder();
+                for (com.fasterxml.jackson.databind.JsonNode r : node.get("context").get("references")) {
+                    String type = r.has("type") && !r.get("type").isNull() ? r.get("type").asText() : "";
+                    String title = r.has("title") && !r.get("title").isNull() ? r.get("title").asText() : "";
+                    String content = r.has("content") && !r.get("content").isNull() ? r.get("content").asText() : "";
+                    // 如果内容为空且是章节类型，尝试从后端查询
+                    if (content.isEmpty() && "chapter".equals(type) && r.has("id") && !r.get("id").isNull()) {
+                        try {
+                            String chapterIdStr = r.get("id").asText();
+                            if (chapterIdStr != null && !chapterIdStr.isEmpty()) {
+                                Long chapterId = Long.parseLong(chapterIdStr);
+                                content = projectService.getChapterContent(chapterId);
+                                if (content == null) content = "";
+                            }
+                        } catch (Exception e) {
+                            System.out.println("Failed to load chapter content for id=" + r.get("id") + ", error=" + e.getMessage());
+                        }
+                    }
+                    if (content.isEmpty()) continue;
+                    // 章节类型特殊处理
+                    if ("chapter".equals(type)) {
+                        referencesText.append("章节《").append(title).append("》正文内容：\n").append(content).append("\n\n");
+                    } else {
+                        referencesText.append(title).append("：\n").append(content).append("\n\n");
+                    }
+                }
+                if (referencesText.length() > 0) {
+                    messages.add(new SystemMessage("引用的参考资料：\n" + referencesText.toString()));
+                }
             }
             if (node.has("history") && node.get("history").isArray()) {
                 for (com.fasterxml.jackson.databind.JsonNode h : node.get("history")) {
@@ -1102,7 +1166,6 @@ public class AiController {
         String text = reqVO.getText();
         String context = reqVO.getContext();
         String instruction = reqVO.getInstruction();
-        String model = reqVO.getModel();
         ChatModel chat = aiModelFactory.getDefaultChatModel(currentPlatform);
         boolean isKnowledgeMode =
                 instruction != null && instruction.contains("已知事实") && instruction.contains("误解");
@@ -1111,7 +1174,6 @@ public class AiController {
 
         String system;
         String user;
-        Prompt prompt;
 
         if (isKnowledgeMode) {
             if (isBeforeStoryKnowledge) {

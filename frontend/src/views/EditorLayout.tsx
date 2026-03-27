@@ -2447,7 +2447,14 @@ export default function EditorLayout() {
           }
         }
         if (!chapterObj) throw new Error('未找到目标章节');
-        const baseText = chapterObj.content || '';
+        // 优先从本地获取内容，如果没有则从后端查询完整内容
+        let baseText = chapterObj.content || '';
+        if (!baseText.trim()) {
+          const contentRes = await getChapterContent(chapterId);
+          if (contentRes.success && contentRes.data) {
+            baseText = contentRes.data;
+          }
+        }
         const ctxParts: string[] = [];
         ctxParts.push(`章节:${chapterObj.title || ''}`);
         const vol = (novel?.volumes || []).find(v => v.chapters.some(c => c.id === chapterId));
@@ -2458,13 +2465,27 @@ export default function EditorLayout() {
         const currentIndex = allChapters.findIndex((c: any) => c.id === chapterId);
         if (currentIndex > 0) {
           const prevChapter = allChapters[currentIndex - 1];
-          const prevContent = prevChapter.content || '';
+          let prevContent = prevChapter.content || '';
+          // 如果本地没有内容，从后端获取
+          if (!prevContent.trim() && prevChapter.id) {
+            const prevContentRes = await getChapterContent(prevChapter.id);
+            if (prevContentRes.success && prevContentRes.data) {
+              prevContent = prevContentRes.data;
+            }
+          }
           const prevSnippet = prevContent.slice(-500); // Increased context
           if (prevSnippet) ctxParts.push(`上一章结尾:${prevSnippet}`);
         }
         if (currentIndex < allChapters.length - 1) {
           const nextChapter = allChapters[currentIndex + 1];
-          const nextContent = nextChapter.content || '';
+          let nextContent = nextChapter.content || '';
+          // 如果本地没有内容，从后端获取
+          if (!nextContent.trim() && nextChapter.id) {
+            const nextContentRes = await getChapterContent(nextChapter.id);
+            if (nextContentRes.success && nextContentRes.data) {
+              nextContent = nextContentRes.data;
+            }
+          }
           const nextSnippet = nextContent.slice(0, 500); // Increased context
           if (nextSnippet) ctxParts.push(`下一章开头:${nextSnippet}`);
         }
@@ -2984,6 +3005,7 @@ export default function EditorLayout() {
           content = (ref.data as any).content || JSON.stringify(ref.data);
         }
         return {
+          id: ref.id,
           type: ref.type,
           title: ref.label,
           content: content
@@ -3208,7 +3230,7 @@ export default function EditorLayout() {
                 } else {
                   c = (r.data as any).content || JSON.stringify(r.data);
                 }
-                arr.push({ type: r.type, title: r.label, content: c });
+                arr.push({ id: r.id, type: r.type, title: r.label, content: c });
               }
               return arr;
             })()
@@ -5838,20 +5860,32 @@ ${locationPrompt || '请根据上述空间设置，将其拆解并丰富为具�
                     <div className={`p-4 border-t border-zinc-200 dark:border-zinc-800 transition-colors ${
                         isCommandMode ? 'bg-purple-50/30 dark:bg-purple-900/10' : 'bg-white dark:bg-zinc-900'
                     }`}>
-                      <div className="flex items-center gap-2 mb-2">
+                      <div className="flex items-center gap-1 mb-3 bg-zinc-100/50 dark:bg-zinc-800/50 p-1 rounded-lg w-fit">
                         <button
-                            onClick={() => setIsCommandMode(!isCommandMode)}
-                            className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs font-medium transition-colors ${
+                            onClick={() => setIsCommandMode(false)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                                !isCommandMode
+                                    ? 'bg-white dark:bg-zinc-700 text-blue-600 dark:text-blue-400 shadow-sm'
+                                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
+                            }`}
+                        >
+                          <Bot className="w-3.5 h-3.5" />
+                          对话模式
+                        </button>
+                        <button
+                            onClick={() => setIsCommandMode(true)}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
                                 isCommandMode
-                                    ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
-                                    : 'text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800'
+                                    ? 'bg-white dark:bg-zinc-700 text-purple-600 dark:text-purple-400 shadow-sm'
+                                    : 'text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-300'
                             }`}
                         >
                           <Sparkles className="w-3.5 h-3.5" />
-                          {isCommandMode ? '指令模式' : '切换到指令模式'}
+                          指令模式
                         </button>
-                        {isCommandMode && <span className="text-xs text-zinc-400">输入自然语言指令，例如“把第一章标题改成...”</span>}
                       </div>
+                      {isCommandMode && <div className="text-xs text-zinc-500 mb-2 px-1">输入自然语言指令，例如“把第一章标题改成...” (输入 @ 引用上下文)</div>}
+                      {!isCommandMode && <div className="text-xs text-zinc-500 mb-2 px-1">与AI助手自由对话，讨论剧情、获取灵感或解答疑问 (输入 @ 引用上下文)</div>}
 
                       <SmartTextarea
                           value={input}
@@ -5861,7 +5895,8 @@ ${locationPrompt || '请根据上述空间设置，将其拆解并丰富为具�
                           isLoading={isLoading}
                           references={novelReferences}
                           onReferenceAdd={(ref) => setSelectedReferences(prev => [...prev, ref])}
-                          placeholder={isCommandMode ? "请输入指令..." : "输入消息..."}
+                          placeholder={isCommandMode ? "请输入指令，例如：“帮我扩写一下当前段落”" : "输入消息与AI讨论..."}
+                          isCommandMode={isCommandMode}
                       />
                       <div className="mt-2 flex items-center gap-2 justify-end">
                         <div className="hidden flex items-center gap-2">

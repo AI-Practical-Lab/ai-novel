@@ -2744,7 +2744,8 @@ export default function EditorLayout() {
               lowerInstr.includes('remove');
 
           if (isDeleteIntent) {
-            const delRes = await deleteLore(novelId, loreId);
+            const deleteTargetId = resolveKnowledgeCharacterLoreIdForSave(String(loreId));
+            const delRes = await deleteLore(novelId, deleteTargetId);
             if (!delRes.success) {
               throw new Error(delRes.error || '删除设定失败');
             }
@@ -3635,7 +3636,8 @@ export default function EditorLayout() {
         alert('删除失败: ' + res.error);
       }
     } else if (type === 'lore') {
-      const res = await deleteLore(id, targetId);
+      const resolvedLoreId = resolveKnowledgeCharacterLoreIdForSave(String(targetId));
+      const res = await deleteLore(id, resolvedLoreId);
       if (res.success) {
         const novelRes = await getNovel(id);
         if (novelRes.success) {
